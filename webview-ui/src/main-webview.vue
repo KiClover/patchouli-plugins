@@ -11,6 +11,7 @@ import SettingsView from "./views/SettingsView.vue";
 
 type TabValue = "process" | "community" | "settings";
 const tabValue = ref<TabValue>((page as TabValue) || ("process" as TabValue));
+tabValue.value = "process"
 document.documentElement.setAttribute('theme-mode', 'dark');
 </script>
 

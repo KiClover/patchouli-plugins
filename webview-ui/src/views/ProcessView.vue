@@ -8,7 +8,7 @@ const props = defineProps<{ api: API }>();
 type RatioOption = { label: string; value: string };
 
 const modelOptions = [
-  { label: "模型 A", value: "model-a" },
+  { label: "Nanobanana_Pro", value: "model-a" },
   { label: "模型 B", value: "model-b" },
 ];
 
@@ -44,10 +44,16 @@ const maxUpload = 5;
 const uploadFiles = ref<any[]>([]);
 
 const uploadTips = computed(() => `支持 jpg/png，最多 ${maxUpload} 张（参考图）`);
-
+const info = ref<any>()
 const handleGenerate = async () => {
-  await props.api.cacheCurrentSelectionImage();
-  await props.api.notify("已缓存当前选区图片（待你后续接入上传逻辑）");
+  const cfg = await props.api.getGlobalConfig();
+  if (!cfg.apiServer) throw new Error("请先在设置里配置 API 服务器（上传 URL）");
+  if (!cfg.apiKey) throw new Error("请先在设置里配置 Key（apikey header）");
+  info.value = await props.api.uploadCurrentSelectionImage?.({
+    uploadUrl: cfg.apiServer,
+    apiKey: cfg.apiKey,
+  });
+  console.log("uploaded url:", info.value);
 };
 </script>
 
