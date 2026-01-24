@@ -1,22 +1,31 @@
 <script setup lang="ts">
 import axios from "axios";
-import { computed, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { MessagePlugin } from "tdesign-vue-next";
 
 import type { API } from "../../../src/api/api";
-
+import { getAppList, type AppItem } from "../api/app";
+import { setSecretKey } from "../api/req";
+import { RefreshIcon } from 'tdesign-icons-vue-next';
 const props = defineProps<{ api: API }>();
 
 type RatioOption = { label: string; value: string };
 
 const modelOptions = [
-  { label: "Nanobanana_Pro", value: "model-a" },
-  { label: "模型 B", value: "model-b" },
+  { label: "NanoBanana", value: "nano-banana" },
+  { label: "NanoBananaFast", value: "nano-banana-fast" },
+  { label: "NanoBananaPro", value: "nano-banana-pro" },
+  { label: "NanoBananaPro-VT", value: "nano-banana-pro-vt" },
+  { label: "NanoBananaPro-VIP", value: "nano-banana-pro-vip" },
+  { label: "NanoBananaPro-4K-VIP", value: "nano-banana-pro-4k-vip" },
 ];
 
-const presetOptions = [
-  { label: "预设 1", value: "preset-1" },
-  { label: "预设 2", value: "preset-2" },
-];
+type PresetOption = { label: string; value: number };
+
+const presetList = ref<AppItem[]>([]);
+const presetOptions = computed<PresetOption[]>(() =>
+  presetList.value.map((item) => ({ label: item.name, value: item.id })),
+);
 
 const ratioOptions: RatioOption[] = [
   { label: "1:1", value: "1:1" },
@@ -35,7 +44,7 @@ const resolutionOptions = [
 ];
 
 const selectedModel = ref<string>(modelOptions[0].value);
-const selectedPreset = ref<string>(presetOptions[0].value);
+const selectedPreset = ref<number | null>(null);
 const prompt = ref<string>("");
 
 const useCustomRatio = ref(false);
@@ -51,6 +60,42 @@ const previewUrl = ref<string | null>(null)
 const previewObjectUrl = ref<string | null>(null)
 const outputForceOpaque = ref(true)
 
+const isGenerating = ref(false);
+const genProgress = ref(0);
+const genStatus = ref<string>("");
+const genError = ref<string>("");
+const genResultUrl = ref<string>("");
+
+const loadPresets = async () => {
+  try {
+    const res = await getAppList();
+    presetList.value = res.list || [];
+    if (selectedPreset.value == null && presetList.value.length > 0) {
+      selectedPreset.value = presetList.value[0].id;
+    }
+    MessagePlugin.success("预设加载成功");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    MessagePlugin.error(`预设加载失败：${msg}`);
+    throw e;
+  }
+};
+
+watch(selectedPreset, (id) => {
+  if (id == null) return;
+  const found = presetList.value.find((x) => x.id === id);
+  if (!found) return;
+  prompt.value = found.prompt || "";
+});
+
+onMounted(() => {
+  (async () => {
+    const cfg = await props.api.getGlobalConfig();
+    setSecretKey(cfg.apiKey || undefined);
+    await loadPresets();
+  })();
+});
+
 
 const blobToDataUrl = async (blob: Blob): Promise<string> => {
   return await new Promise((resolve, reject) => {
@@ -59,6 +104,38 @@ const blobToDataUrl = async (blob: Blob): Promise<string> => {
     reader.onload = () => resolve(String(reader.result));
     reader.readAsDataURL(blob);
   });
+};
+
+const getUploadFileDataUrls = async (): Promise<string[]> => {
+  const urls: string[] = [];
+  for (const item of uploadFiles.value || []) {
+    const raw: any =
+      (item as any)?.raw ||
+      (item as any)?.file ||
+      (item as any)?.originFileObj ||
+      (item as any)?.response?.raw;
+    if (!raw) continue;
+    if (raw instanceof Blob) {
+      urls.push(await blobToDataUrl(raw));
+    }
+  }
+  return urls;
+};
+
+const parseJsonLinesFromText = (text: string) => {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const objs: any[] = [];
+  for (const line of lines) {
+    try {
+      objs.push(JSON.parse(line));
+    } catch {
+      // ignore
+    }
+  }
+  return objs;
 };
 
 const rgbaToPngBlob = async (params: {
@@ -137,8 +214,7 @@ const uploadPng = async (params: {
 
 const handleGenerate = async () => {
   const cfg = await props.api.getGlobalConfig();
-  if (!cfg.apiServer) throw new Error("请先在设置里配置 API 服务器（上传 URL）");
-  if (!cfg.apiKey) throw new Error("请先在设置里配置 Key（apikey header）");
+  if (!cfg.apiServer) throw new Error("请先在设置里选择模型服务器");
 
   const sel = await props.api.getCurrentSelectionRgba?.();
   if (!sel) return;
@@ -154,15 +230,91 @@ const handleGenerate = async () => {
   console.log("preview dataUrl length:", previewUrl.value?.length);
   console.log("preview objectUrl:", previewObjectUrl.value);
 
+  isGenerating.value = true;
+  genProgress.value = 0;
+  genStatus.value = "running";
+  genError.value = "";
+  genResultUrl.value = "";
+
   try {
-    info.value = await uploadPng({
-      uploadUrl: cfg.apiServer,
-      apiKey: cfg.apiKey,
-      blob,
+    if (cfg.apiServer !== "grsai") {
+      throw new Error("当前仅实现 GrsAI 模型服务器");
+    }
+
+    const refUrls = await getUploadFileDataUrls();
+    const selectionDataUrl = await blobToDataUrl(blob);
+    const urls = [...refUrls, selectionDataUrl];
+
+    const body = {
+      model: selectedModel.value,
+      prompt: prompt.value,
+      aspectRatio: useCustomRatio.value ? selectedRatio.value : "auto",
+      imageSize: String(selectedResolution.value).toUpperCase(),
+      urls,
+      shutProgress: false,
+    };
+
+    const res = await fetch("https://grsai.dakka.com.cn/v1/draw/nano-banana", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer apikey",
+      },
+      body: JSON.stringify(body),
     });
-    console.log("uploaded url:", info.value);
-  } catch (e) {
-    console.error("upload failed", e);
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`请求失败: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`);
+    }
+    if (!res.body) throw new Error("响应不支持 stream");
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split(/\r?\n/);
+      buffer = parts.pop() || "";
+
+      for (const part of parts) {
+        const objs = parseJsonLinesFromText(part);
+        for (const obj of objs) {
+          if (typeof obj?.progress === "number") genProgress.value = obj.progress;
+          if (typeof obj?.status === "string") genStatus.value = obj.status;
+          const firstUrl = obj?.results?.[0]?.url;
+          if (typeof firstUrl === "string") genResultUrl.value = firstUrl;
+          const err = obj?.error || obj?.failure_reason;
+          if (typeof err === "string" && err) genError.value = err;
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      const objs = parseJsonLinesFromText(buffer);
+      for (const obj of objs) {
+        if (typeof obj?.progress === "number") genProgress.value = obj.progress;
+        if (typeof obj?.status === "string") genStatus.value = obj.status;
+        const firstUrl = obj?.results?.[0]?.url;
+        if (typeof firstUrl === "string") genResultUrl.value = firstUrl;
+        const err = obj?.error || obj?.failure_reason;
+        if (typeof err === "string" && err) genError.value = err;
+      }
+    }
+
+    if (genStatus.value === "failed") {
+      throw new Error(genError.value || "生成失败");
+    }
+
+    if (genStatus.value === "succeeded") {
+      MessagePlugin.success("生成完成");
+    }
+  } finally {
+    isGenerating.value = false;
   }
 };
 </script>
@@ -176,6 +328,7 @@ const handleGenerate = async () => {
 
       <t-form-item label="预设">
         <t-select v-model="selectedPreset" :options="presetOptions" />
+        <t-button theme="primary" @click="loadPresets"><template #icon><RefreshIcon /></template></t-button>
       </t-form-item>
 
       <t-form-item label="提示词">
@@ -214,34 +367,29 @@ const handleGenerate = async () => {
         <t-select v-model="selectedResolution" :options="resolutionOptions" />
       </t-form-item>
 
-      <t-form-item>
-        <t-button theme="primary" block @click="handleGenerate">生成</t-button>
-      </t-form-item>
-
       <t-form-item label="移除透明通道">
         <t-switch v-model="outputForceOpaque" />
       </t-form-item>
 
+      <t-form-item>
+        <t-button theme="primary" block :loading="isGenerating" @click="handleGenerate">生成</t-button>
+      </t-form-item>
+
+      <t-form-item>
+        <t-progress :percentage="genProgress" />
+        <div v-if="genStatus" style="margin-top: 8px; font-size: 12px;">
+          <div>状态：{{ genStatus }}</div>
+          <div v-if="genError" style="color: #d54941;">错误：{{ genError }}</div>
+          <div v-if="genResultUrl">结果：{{ genResultUrl }}</div>
+        </div>
+      </t-form-item>
+
       <t-form-item v-if="previewUrl" label="选区预览">
-        <div class="preview-block">
           <img
             class="preview-img"
             :key="previewUrl"
             :src="previewUrl"
           />
-          <div class="preview-debug">
-            dataUrl: {{ previewUrl?.slice(0, 32) }}... (len={{ previewUrl?.length }})
-          </div>
-          <img
-            v-if="previewObjectUrl"
-            class="preview-img"
-            :key="previewObjectUrl"
-            :src="previewObjectUrl"
-          />
-          <div v-if="previewObjectUrl" class="preview-debug">
-            objectUrl: {{ previewObjectUrl }}
-          </div>
-        </div>
       </t-form-item>
     </t-form>
   </div>

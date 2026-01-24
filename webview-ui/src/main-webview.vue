@@ -18,10 +18,10 @@ document.documentElement.setAttribute('theme-mode', 'dark');
 <template>
   <div class="app-root t-theme-dark">
     <t-tabs v-model:value="tabValue" placement="top" size="medium">
-      <t-tab-panel value="process" label="处理">
+      <t-tab-panel value="process" label="魔导书">
         <ProcessView :api="api" />
       </t-tab-panel>
-      <t-tab-panel value="community" label="预设社区">
+      <t-tab-panel value="community" label="大图书馆">
         <CommunityView />
       </t-tab-panel>
       <t-tab-panel value="settings" label="设置">

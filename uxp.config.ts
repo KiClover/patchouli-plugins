@@ -10,7 +10,7 @@ const extraPrefs = {
 };
 
 export const id = "com.virtual.uxp"; 
-const name = "VirtualAI"; 
+const name = "帕秋莉";
 
 const manifest: UXP_Manifest = {
   id,
@@ -114,6 +114,7 @@ const manifest: UXP_Manifest = {
         "https://svelte.dev",
         "https://reactjs.org",
         "https://vuejs.org/",
+        "http://localhost:8892",
         `ws://localhost:${extraPrefs.hotReloadPort}`, // Required for hot reload
       ],
     },

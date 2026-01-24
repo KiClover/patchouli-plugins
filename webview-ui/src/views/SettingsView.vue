@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 
 import type { API } from "../../../src/api/api";
+import { setSecretKey } from "../api/req";
 
 const props = defineProps<{ api: API }>();
 
@@ -9,18 +10,20 @@ const apiKey = ref<string>("");
 const apiServer = ref<string>("");
 
 const apiServerOptions = [
-  { label: "官方服务器", value: "https://api.example.com" },
-  { label: "自定义服务器", value: "https://api.yourdomain.com" },
+  { label: "官方服务器", value: "official", disabled: true },
+  { label: "GrsAI", value: "grsai" },
 ];
 
 const loadConfig = async () => {
   const cfg = await props.api.getGlobalConfig();
   apiKey.value = cfg.apiKey || "";
   apiServer.value = cfg.apiServer || apiServerOptions[0].value;
+  setSecretKey(apiKey.value || undefined);
 };
 
 const saveKey = async () => {
   await props.api.setApiKey(apiKey.value);
+  setSecretKey(apiKey.value || undefined);
 };
 
 const commitServer = async () => {
@@ -40,7 +43,7 @@ onMounted(() => {
         <t-input v-model="apiKey" placeholder="请输入 Key" @blur="saveKey" />
       </t-form-item>
 
-      <t-form-item label="API 服务器">
+      <t-form-item label="模型服务器">
         <t-select
           v-model="apiServer"
           :options="apiServerOptions"
@@ -48,6 +51,11 @@ onMounted(() => {
           @change="commitServer"
           @blur="commitServer"
         />
+      </t-form-item>
+
+      <t-form-item label="版本检查">
+        <t-input disabled placeholder="v1.0.0" />
+        <t-button theme="primary">检查更新</t-button>
       </t-form-item>
     </t-form>
   </div>
