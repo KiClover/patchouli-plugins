@@ -31,8 +31,8 @@ const manifest: UXP_Manifest = {
       label: {
         default: name,
       },
-      minimumSize: { width: 230, height: 500 },
-      maximumSize: { width: 2000, height: 2000 },
+      minimumSize: { width: 400, height: 650 },
+      maximumSize: { width: 2000, height: 850 },
       preferredDockedSize: { width: 230, height: 300 },
       preferredFloatingSize: { width: 450, height: 400 },
       icons: [

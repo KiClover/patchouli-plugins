@@ -36,6 +36,7 @@ const resolutionOptions = [
 
 const selectedModel = ref<string>(modelOptions[0].value);
 const selectedPreset = ref<string>(presetOptions[0].value);
+const prompt = ref<string>("");
 
 const useCustomRatio = ref(false);
 const selectedRatio = ref<string>(ratioOptions[0].value);
@@ -49,17 +50,7 @@ const info = ref<any>()
 const previewUrl = ref<string | null>(null)
 const previewObjectUrl = ref<string | null>(null)
 const outputForceOpaque = ref(true)
-const previewApplyGamma = ref(false)
-const outputExposure = ref(1.15)
-const outputGamma = ref(1.0)
 
-const onPreviewLoad = () => {
-  console.log("preview img loaded");
-};
-
-const onPreviewError = (e: any) => {
-  console.error("preview img error", e);
-};
 
 const blobToDataUrl = async (blob: Blob): Promise<string> => {
   return await new Promise((resolve, reject) => {
@@ -94,33 +85,10 @@ const rgbaToPngBlob = async (params: {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Failed to get 2d context");
 
-  const needOpaque = outputForceOpaque.value;
-  const needColorAdjust = outputExposure.value !== 1.0 || outputGamma.value !== 1.0;
-
-  const u8ForPreview = needOpaque || needColorAdjust
+  const u8ForPreview = outputForceOpaque.value
     ? (() => {
         const copy = new Uint8ClampedArray(u8);
-
-        let lut: Uint8ClampedArray | null = null;
-        if (needColorAdjust) {
-          lut = new Uint8ClampedArray(256);
-          const exposure = Math.max(0, Number(outputExposure.value) || 1);
-          const gamma = Math.max(0.01, Number(outputGamma.value) || 1);
-          for (let i = 0; i < 256; i++) {
-            const x = i / 255;
-            const y = Math.pow(x, 1 / gamma) * exposure;
-            lut[i] = Math.max(0, Math.min(255, Math.round(y * 255)));
-          }
-        }
-
-        for (let i = 0; i < copy.length; i += 4) {
-          if (lut) {
-            copy[i + 0] = lut[copy[i + 0]];
-            copy[i + 1] = lut[copy[i + 1]];
-            copy[i + 2] = lut[copy[i + 2]];
-          }
-          if (needOpaque) copy[i + 3] = 255;
-        }
+        for (let i = 3; i < copy.length; i += 4) copy[i] = 255;
         return copy;
       })()
     : u8;
@@ -172,7 +140,7 @@ const handleGenerate = async () => {
   if (!cfg.apiServer) throw new Error("请先在设置里配置 API 服务器（上传 URL）");
   if (!cfg.apiKey) throw new Error("请先在设置里配置 Key（apikey header）");
 
-  const sel = await props.api.getCurrentSelectionRgba?.({ applyGamma: previewApplyGamma.value });
+  const sel = await props.api.getCurrentSelectionRgba?.();
   if (!sel) return;
 
   const blob = await rgbaToPngBlob(sel as any);
@@ -210,6 +178,14 @@ const handleGenerate = async () => {
         <t-select v-model="selectedPreset" :options="presetOptions" />
       </t-form-item>
 
+      <t-form-item label="提示词">
+        <t-input v-model="prompt" />
+        <t-dropdown>
+          <t-button theme="primary">保存</t-button>
+          <t-dropdown-item>保存</t-dropdown-item>
+        </t-dropdown>
+      </t-form-item>
+
       <t-form-item label="参考图上传">
         <div class="upload-block">
           <t-upload
@@ -222,7 +198,7 @@ const handleGenerate = async () => {
         </div>
       </t-form-item>
 
-      <t-form-item label="是否使用自定义横纵比">
+      <t-form-item label="自定义横纵比">
         <t-switch v-model="useCustomRatio" />
       </t-form-item>
 
@@ -242,20 +218,8 @@ const handleGenerate = async () => {
         <t-button theme="primary" block @click="handleGenerate">生成</t-button>
       </t-form-item>
 
-      <t-form-item label="去掉透明通道">
+      <t-form-item label="移除透明通道">
         <t-switch v-model="outputForceOpaque" />
-      </t-form-item>
-
-      <t-form-item label="Gamma 修正">
-        <t-switch v-model="previewApplyGamma" />
-      </t-form-item>
-
-      <t-form-item label="提亮(曝光)">
-        <t-input-number v-model="outputExposure" :min="0.2" :max="3" :step="0.05" />
-      </t-form-item>
-
-      <t-form-item label="Gamma(预览)">
-        <t-input-number v-model="outputGamma" :min="0.5" :max="2" :step="0.05" />
       </t-form-item>
 
       <t-form-item v-if="previewUrl" label="选区预览">
@@ -264,8 +228,6 @@ const handleGenerate = async () => {
             class="preview-img"
             :key="previewUrl"
             :src="previewUrl"
-            @load="onPreviewLoad"
-            @error="onPreviewError"
           />
           <div class="preview-debug">
             dataUrl: {{ previewUrl?.slice(0, 32) }}... (len={{ previewUrl?.length }})
@@ -275,8 +237,6 @@ const handleGenerate = async () => {
             class="preview-img"
             :key="previewObjectUrl"
             :src="previewObjectUrl"
-            @load="onPreviewLoad"
-            @error="onPreviewError"
           />
           <div v-if="previewObjectUrl" class="preview-debug">
             objectUrl: {{ previewObjectUrl }}
