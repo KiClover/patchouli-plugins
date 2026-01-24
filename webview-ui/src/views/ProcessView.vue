@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import axios from "axios";
 import { computed, ref } from "vue";
 
 import type { API } from "../../../src/api/api";
@@ -45,15 +46,156 @@ const uploadFiles = ref<any[]>([]);
 
 const uploadTips = computed(() => `支持 jpg/png，最多 ${maxUpload} 张（参考图）`);
 const info = ref<any>()
+const previewUrl = ref<string | null>(null)
+const previewObjectUrl = ref<string | null>(null)
+const outputForceOpaque = ref(true)
+const previewApplyGamma = ref(false)
+const outputExposure = ref(1.15)
+const outputGamma = ref(1.0)
+
+const onPreviewLoad = () => {
+  console.log("preview img loaded");
+};
+
+const onPreviewError = (e: any) => {
+  console.error("preview img error", e);
+};
+
+const blobToDataUrl = async (blob: Blob): Promise<string> => {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("FileReader failed"));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(blob);
+  });
+};
+
+const rgbaToPngBlob = async (params: {
+  rgba: ArrayBuffer | number[];
+  width: number;
+  height: number;
+}) => {
+  const { rgba, width, height } = params;
+  const expectedLen = width * height * 4;
+  const u8 = Array.isArray(rgba)
+    ? new Uint8ClampedArray(rgba)
+    : new Uint8ClampedArray(rgba);
+
+  console.log("rgba size:", { width, height, expectedLen, gotLen: u8.length });
+  if (u8.length === 0) throw new Error("RGBA buffer is empty (0 length)");
+  if (u8.length !== expectedLen) {
+    throw new Error(`RGBA length mismatch: expected ${expectedLen}, got ${u8.length}`);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Failed to get 2d context");
+
+  const needOpaque = outputForceOpaque.value;
+  const needColorAdjust = outputExposure.value !== 1.0 || outputGamma.value !== 1.0;
+
+  const u8ForPreview = needOpaque || needColorAdjust
+    ? (() => {
+        const copy = new Uint8ClampedArray(u8);
+
+        let lut: Uint8ClampedArray | null = null;
+        if (needColorAdjust) {
+          lut = new Uint8ClampedArray(256);
+          const exposure = Math.max(0, Number(outputExposure.value) || 1);
+          const gamma = Math.max(0.01, Number(outputGamma.value) || 1);
+          for (let i = 0; i < 256; i++) {
+            const x = i / 255;
+            const y = Math.pow(x, 1 / gamma) * exposure;
+            lut[i] = Math.max(0, Math.min(255, Math.round(y * 255)));
+          }
+        }
+
+        for (let i = 0; i < copy.length; i += 4) {
+          if (lut) {
+            copy[i + 0] = lut[copy[i + 0]];
+            copy[i + 1] = lut[copy[i + 1]];
+            copy[i + 2] = lut[copy[i + 2]];
+          }
+          if (needOpaque) copy[i + 3] = 255;
+        }
+        return copy;
+      })()
+    : u8;
+
+  const imageData = new ImageData(u8ForPreview, width, height);
+  ctx.putImageData(imageData, 0, 0);
+
+  const blob: Blob = await new Promise((resolve, reject) => {
+    canvas.toBlob((b) => {
+      if (!b) reject(new Error("canvas.toBlob returned null"));
+      else resolve(b);
+    }, "image/png");
+  });
+  console.log("png blob:", blob);
+  return blob;
+};
+
+const uploadPng = async (params: {
+  uploadUrl: string;
+  apiKey: string;
+  apiKeyHeaderName?: string;
+  fileFieldName?: string;
+  blob: Blob;
+}) => {
+  const apiKeyHeaderName = params.apiKeyHeaderName || "apikey";
+  const fileFieldName = params.fileFieldName || "file";
+
+  const form = new FormData();
+  form.append(fileFieldName, params.blob, "selection.png");
+
+  const res = await axios.post(params.uploadUrl, form, {
+    headers: {
+      [apiKeyHeaderName]: params.apiKey,
+    },
+  });
+
+  const data = res.data;
+  if (typeof data === "string") return data;
+  if (data && typeof data === "object") {
+    if (typeof (data as any).url === "string") return (data as any).url;
+    if (typeof (data as any).data?.url === "string") return (data as any).data.url;
+    if (typeof (data as any).result?.url === "string") return (data as any).result.url;
+  }
+  throw new Error("Upload succeeded but no url field found in response");
+};
+
 const handleGenerate = async () => {
   const cfg = await props.api.getGlobalConfig();
   if (!cfg.apiServer) throw new Error("请先在设置里配置 API 服务器（上传 URL）");
   if (!cfg.apiKey) throw new Error("请先在设置里配置 Key（apikey header）");
-  info.value = await props.api.uploadCurrentSelectionImage?.({
-    uploadUrl: cfg.apiServer,
-    apiKey: cfg.apiKey,
-  });
-  console.log("uploaded url:", info.value);
+
+  const sel = await props.api.getCurrentSelectionRgba?.({ applyGamma: previewApplyGamma.value });
+  if (!sel) return;
+
+  const blob = await rgbaToPngBlob(sel as any);
+
+  previewUrl.value = await blobToDataUrl(blob);
+
+  if (previewObjectUrl.value) URL.revokeObjectURL(previewObjectUrl.value);
+  previewObjectUrl.value = URL.createObjectURL(blob);
+
+  console.log("preview dataUrl prefix:", previewUrl.value?.slice(0, 32));
+  console.log("preview dataUrl length:", previewUrl.value?.length);
+  console.log("preview objectUrl:", previewObjectUrl.value);
+
+  try {
+    info.value = await uploadPng({
+      uploadUrl: cfg.apiServer,
+      apiKey: cfg.apiKey,
+      blob,
+    });
+    console.log("uploaded url:", info.value);
+  } catch (e) {
+    console.error("upload failed", e);
+  }
 };
 </script>
 
@@ -99,6 +241,48 @@ const handleGenerate = async () => {
       <t-form-item>
         <t-button theme="primary" block @click="handleGenerate">生成</t-button>
       </t-form-item>
+
+      <t-form-item label="去掉透明通道">
+        <t-switch v-model="outputForceOpaque" />
+      </t-form-item>
+
+      <t-form-item label="Gamma 修正">
+        <t-switch v-model="previewApplyGamma" />
+      </t-form-item>
+
+      <t-form-item label="提亮(曝光)">
+        <t-input-number v-model="outputExposure" :min="0.2" :max="3" :step="0.05" />
+      </t-form-item>
+
+      <t-form-item label="Gamma(预览)">
+        <t-input-number v-model="outputGamma" :min="0.5" :max="2" :step="0.05" />
+      </t-form-item>
+
+      <t-form-item v-if="previewUrl" label="选区预览">
+        <div class="preview-block">
+          <img
+            class="preview-img"
+            :key="previewUrl"
+            :src="previewUrl"
+            @load="onPreviewLoad"
+            @error="onPreviewError"
+          />
+          <div class="preview-debug">
+            dataUrl: {{ previewUrl?.slice(0, 32) }}... (len={{ previewUrl?.length }})
+          </div>
+          <img
+            v-if="previewObjectUrl"
+            class="preview-img"
+            :key="previewObjectUrl"
+            :src="previewObjectUrl"
+            @load="onPreviewLoad"
+            @error="onPreviewError"
+          />
+          <div v-if="previewObjectUrl" class="preview-debug">
+            objectUrl: {{ previewObjectUrl }}
+          </div>
+        </div>
+      </t-form-item>
     </t-form>
   </div>
 </template>
@@ -110,5 +294,33 @@ const handleGenerate = async () => {
 
 .upload-block {
   width: 100%;
+}
+
+.preview-img {
+  width: 100%;
+  max-height: 240px;
+  display: block;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.preview-block {
+  padding: 8px;
+  border-radius: 6px;
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, rgba(0, 0, 0, 0.12) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(0, 0, 0, 0.12) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(0, 0, 0, 0.12) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(0, 0, 0, 0.12) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+}
+
+.preview-debug {
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: 0.75;
+  word-break: break-all;
 }
 </style>
