@@ -57,6 +57,9 @@ onMounted(() => {
         <t-input disabled placeholder="v1.0.0" />
         <t-button theme="primary">检查更新</t-button>
       </t-form-item>
+      <t-form-item label="PowerBy">
+        <t-input disabled placeholder="佰分摆/KiClover" />
+      </t-form-item>
     </t-form>
   </div>
 </template>

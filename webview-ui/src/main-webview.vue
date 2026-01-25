@@ -36,13 +36,13 @@ document.documentElement.setAttribute('theme-mode', 'dark');
 <template>
   <div class="app-root t-theme-dark">
     <t-tabs v-model:value="tabValue" placement="top" size="medium">
-      <t-tab-panel value="process" label="魔导书">
+      <t-tab-panel value="process" label="魔导回路">
         <ProcessView :api="api" :secret-ready="secretReady" />
       </t-tab-panel>
       <t-tab-panel value="community" label="大图书馆">
         <CommunityView />
       </t-tab-panel>
-      <t-tab-panel value="preset" label="预设">
+      <t-tab-panel value="preset" label="魔导书">
         <PresetView :api="api" :secret-ready="secretReady" />
       </t-tab-panel>
       <t-tab-panel value="settings" label="设置">

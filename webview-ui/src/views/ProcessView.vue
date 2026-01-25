@@ -5,6 +5,7 @@ import { MessagePlugin } from "tdesign-vue-next";
 
 import type { API } from "../../../src/api/api";
 import { getAppList, type AppItem } from "../api/app";
+import { createPresetByUser, updatePresetByUser } from "../api/preset";
 import { setSecretKey } from "../api/req";
 import { RefreshIcon } from 'tdesign-icons-vue-next';
 const props = defineProps<{ api: API; secretReady: boolean }>();
@@ -12,6 +13,82 @@ const props = defineProps<{ api: API; secretReady: boolean }>();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 type RatioOption = { label: string; value: string };
+
+const PROCESS_STATE_KEY = "uxp-psai.process.state.v1";
+type ProcessState = {
+  selectedModel?: string;
+  selectedPreset?: number | null;
+  prompt?: string;
+  useCustomRatio?: boolean;
+  selectedRatio?: string;
+  selectedResolution?: string;
+  outputForceOpaque?: boolean;
+};
+
+const saveUpdate = async () => {
+  if (selectedPreset.value == null) {
+    MessagePlugin.warning("请先选择预设");
+    return;
+  }
+  if (saving.value) return;
+  saving.value = true;
+  try {
+    await updatePresetByUser({
+      id: selectedPreset.value,
+      prompt: prompt.value,
+    });
+    MessagePlugin.success("保存成功");
+    await loadPresets();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    MessagePlugin.error(`保存失败：${msg}`);
+  } finally {
+    saving.value = false;
+  }
+};
+
+const openSaveAs = () => {
+  const found = selectedPreset.value == null ? null : presetList.value.find((x) => x.id === selectedPreset.value);
+  const baseName = found?.name?.trim() || "";
+  saveAsForm.value = {
+    name: baseName ? `${baseName} - 副本` : "",
+    description: found?.description || "",
+  };
+  saveAsVisible.value = true;
+};
+
+const submitSaveAs = async () => {
+  if (!saveAsForm.value.name.trim()) {
+    MessagePlugin.warning("请输入预设名称");
+    return;
+  }
+  if (saveAsCreating.value) return;
+  saveAsCreating.value = true;
+  try {
+    const res = await createPresetByUser({
+      name: saveAsForm.value.name.trim(),
+      description: saveAsForm.value.description.trim(),
+      prompt: prompt.value,
+    });
+    MessagePlugin.success("创建成功");
+    saveAsVisible.value = false;
+    await loadPresets();
+    if (typeof (res as any)?.id === "number") {
+      selectedPreset.value = (res as any).id;
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    MessagePlugin.error(`创建失败：${msg}`);
+  } finally {
+    saveAsCreating.value = false;
+  }
+};
+
+const handleMoreClick = (data: any) => {
+  const v = data?.value;
+  if (v === "save") saveUpdate();
+  if (v === "saveAs") openSaveAs();
+};
 
 const modelOptions = [
   { label: "NanoBanana", value: "nano-banana" },
@@ -49,6 +126,50 @@ const selectedModel = ref<string>(modelOptions[0].value);
 const selectedPreset = ref<number | null>(null);
 const prompt = ref<string>("");
 
+const suppressPresetPromptSync = ref(false);
+
+const saveProcessState = () => {
+  const state: ProcessState = {
+    selectedModel: selectedModel.value,
+    selectedPreset: selectedPreset.value,
+    prompt: prompt.value,
+    useCustomRatio: useCustomRatio.value,
+    selectedRatio: selectedRatio.value,
+    selectedResolution: selectedResolution.value,
+    outputForceOpaque: outputForceOpaque.value,
+  };
+  try {
+    localStorage.setItem(PROCESS_STATE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+};
+
+const readProcessState = (): ProcessState | null => {
+  try {
+    const raw = localStorage.getItem(PROCESS_STATE_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return null;
+    return obj as ProcessState;
+  } catch {
+    return null;
+  }
+};
+
+const saving = ref(false);
+const saveAsVisible = ref(false);
+const saveAsCreating = ref(false);
+const saveAsForm = ref<{ name: string; description: string }>({
+  name: "",
+  description: "",
+});
+
+const moreOptions = [
+  { content: "保存", value: "save" },
+  { content: "另存为", value: "saveAs" },
+];
+
 const useCustomRatio = ref(false);
 const selectedRatio = ref<string>(ratioOptions[0].value);
 const selectedResolution = ref<string>(resolutionOptions[1].value);
@@ -72,8 +193,13 @@ const loadPresets = async () => {
   try {
     const res = await getAppList();
     presetList.value = res.list || [];
-    if (selectedPreset.value == null && presetList.value.length > 0) {
-      selectedPreset.value = presetList.value[0].id;
+    if (presetList.value.length > 0) {
+      if (selectedPreset.value == null) {
+        selectedPreset.value = presetList.value[0].id;
+      } else {
+        const exists = presetList.value.some((x) => x.id === selectedPreset.value);
+        if (!exists) selectedPreset.value = presetList.value[0].id;
+      }
     }
     MessagePlugin.success("预设加载成功");
   } catch (e) {
@@ -85,10 +211,19 @@ const loadPresets = async () => {
 
 watch(selectedPreset, (id) => {
   if (id == null) return;
+  if (suppressPresetPromptSync.value) return;
   const found = presetList.value.find((x) => x.id === id);
   if (!found) return;
   prompt.value = found.prompt || "";
 });
+
+watch(
+  [selectedModel, selectedPreset, prompt, useCustomRatio, selectedRatio, selectedResolution, outputForceOpaque],
+  () => {
+    saveProcessState();
+  },
+  { deep: false },
+);
 
 const loadConfig = async () => {
   let apiKey: string | undefined;
@@ -103,7 +238,44 @@ const loadConfig = async () => {
 
 onMounted(async () => {
   await loadConfig();
+
+  const restored = readProcessState();
+  if (restored) {
+    if (typeof restored.selectedModel === "string" && modelOptions.some((x) => x.value === restored.selectedModel)) {
+      selectedModel.value = restored.selectedModel;
+    }
+    if (typeof restored.useCustomRatio === "boolean") useCustomRatio.value = restored.useCustomRatio;
+    if (typeof restored.selectedRatio === "string" && ratioOptions.some((x) => x.value === restored.selectedRatio)) {
+      selectedRatio.value = restored.selectedRatio;
+    }
+    if (
+      typeof restored.selectedResolution === "string" &&
+      resolutionOptions.some((x) => x.value === restored.selectedResolution)
+    ) {
+      selectedResolution.value = restored.selectedResolution;
+    }
+    if (typeof restored.outputForceOpaque === "boolean") outputForceOpaque.value = restored.outputForceOpaque;
+  }
+
   await loadPresets();
+
+  if (restored) {
+    const desiredPreset = typeof restored.selectedPreset === "number" ? restored.selectedPreset : null;
+    const desiredPrompt = typeof restored.prompt === "string" ? restored.prompt : "";
+
+    if (desiredPreset != null && presetList.value.some((x) => x.id === desiredPreset)) {
+      suppressPresetPromptSync.value = true;
+      selectedPreset.value = desiredPreset;
+      prompt.value = desiredPrompt;
+      suppressPresetPromptSync.value = false;
+    } else {
+      const currentId = selectedPreset.value;
+      if (currentId != null) {
+        const found = presetList.value.find((x) => x.id === currentId);
+        if (found) prompt.value = found.prompt || "";
+      }
+    }
+  }
 });
 
 const blobToDataUrl = async (blob: Blob): Promise<string> => {
@@ -382,9 +554,8 @@ const handleGenerate = async () => {
 
       <t-form-item label="提示词">
         <t-input v-model="prompt" />
-        <t-dropdown>
-          <t-button theme="primary">保存</t-button>
-          <t-dropdown-item>保存</t-dropdown-item>
+        <t-dropdown :options="moreOptions" @click="handleMoreClick">
+          <t-button theme="primary" :loading="saving">···</t-button>
         </t-dropdown>
       </t-form-item>
 
@@ -445,6 +616,23 @@ const handleGenerate = async () => {
       </t-form-item>
       !-->
     </t-form>
+
+    <t-dialog
+      v-model:visible="saveAsVisible"
+      header="另存为"
+      width="560px"
+      :confirm-btn="{ content: '创建', loading: saveAsCreating }"
+      @confirm="submitSaveAs"
+    >
+      <t-form label-width="80px" colon>
+        <t-form-item label="名称">
+          <t-input v-model="saveAsForm.name" placeholder="请输入预设名称" />
+        </t-form-item>
+        <t-form-item label="描述">
+          <t-input v-model="saveAsForm.description" placeholder="可选" />
+        </t-form-item>
+      </t-form>
+    </t-dialog>
   </div>
 </template>
 

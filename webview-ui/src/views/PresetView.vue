@@ -264,7 +264,7 @@ onMounted(async () => {
     >
       <t-form label-width="80px" colon>
         <t-form-item label="名称">
-          <t-input v-model="form.name" placeholder="例如：人像修复" />
+          <t-input v-model="form.name" placeholder="请输入预设名称" />
         </t-form-item>
         <t-form-item label="描述">
           <t-input v-model="form.description" placeholder="可选" />
