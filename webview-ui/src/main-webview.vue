@@ -16,9 +16,10 @@ const secretReady = ref(false);
 
 import ProcessView from "./views/ProcessView.vue";
 import CommunityView from "./views/CommunityView.vue";
+import PresetView from "./views/PresetView.vue";
 import SettingsView from "./views/SettingsView.vue";
 
-type TabValue = "process" | "community" | "settings";
+type TabValue = "process" | "community" | "preset" | "settings";
 const tabValue = ref<TabValue>((page as TabValue) || ("process" as TabValue));
 tabValue.value = "process"
 document.documentElement.setAttribute('theme-mode', 'dark');
@@ -32,6 +33,9 @@ document.documentElement.setAttribute('theme-mode', 'dark');
       </t-tab-panel>
       <t-tab-panel value="community" label="大图书馆">
         <CommunityView />
+      </t-tab-panel>
+      <t-tab-panel value="preset" label="预设">
+        <PresetView />
       </t-tab-panel>
       <t-tab-panel value="settings" label="设置">
         <SettingsView :api="api" />
