@@ -1,12 +1,27 @@
 @use "./variables.scss" as *;
 html,
 body {
-  background-color: #1b1b1b;
+  background-color: #242424;
   font:
     100%/1.5 "Helvetica Neue",
     Helvetica,
     Arial,
     sans-serif;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+#app {
+  background-color: #242424;
+}
+
+.app-root {
+  min-height: 100%;
+  background-color: #242424;
 }
 body {
   margin: 0;

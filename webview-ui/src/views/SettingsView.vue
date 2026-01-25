@@ -39,7 +39,7 @@ onMounted(() => {
 <template>
   <div class="settings-view">
     <t-form label-width="90px" colon>
-      <t-form-item label="Key">
+      <t-form-item label="后端Token">
         <t-input v-model="apiKey" placeholder="请输入 Key" @blur="saveKey" />
       </t-form-item>
 

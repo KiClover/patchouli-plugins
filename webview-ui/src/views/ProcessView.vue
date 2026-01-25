@@ -420,14 +420,16 @@ const handleGenerate = async () => {
       </t-form-item>
 
       <t-form-item>
-        <t-button theme="primary" block :loading="isGenerating" @click="handleGenerate">生成</t-button>
-      </t-form-item>
-      <t-form-item>
-        <t-progress :percentage="genProgress" />
-        <div v-if="genStatus" style="margin-top: 8px; font-size: 12px;">
-          <div>状态：{{ genStatus }}</div>
-          <div v-if="genError" style="color: #d54941;">错误：{{ genError }}</div>
-          <div v-if="genResultUrl">结果：{{ genResultUrl }}</div>
+        <div class="gen-area">
+          <t-button theme="primary" block :loading="isGenerating" @click="handleGenerate">生成</t-button>
+          <div class="gen-area-progress">
+            <t-progress :percentage="genProgress" />
+            <!--<div v-if="genStatus" class="gen-progress-meta">
+              <div>状态：{{ genStatus }}</div>
+              <div v-if="genError" class="gen-progress-error">错误：{{ genError }}</div>
+              <div v-if="genResultUrl">结果：{{ genResultUrl }}</div>
+            </div>!-->
+          </div>
         </div>
       </t-form-item>
 
@@ -450,6 +452,28 @@ const handleGenerate = async () => {
 
 .upload-block {
   width: 100%;
+}
+
+.gen-area {
+  width: 100%;
+}
+
+.gen-area-progress {
+  margin-top: 12px;
+  width: 100%;
+}
+
+.gen-area-progress :deep(.t-progress) {
+  width: 100%;
+}
+
+.gen-progress-meta {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.gen-progress-error {
+  color: #d54941;
 }
 
 .preview-img {
