@@ -10,7 +10,7 @@ const apiKey = ref<string>("");
 const apiServer = ref<string>("");
 
 const apiServerOptions = [
-  { label: "官方服务器", value: "official", disabled: true },
+  { label: "PatchouliProxy", value: "official", disabled: true },
   { label: "GrsAI", value: "grsai" },
 ];
 

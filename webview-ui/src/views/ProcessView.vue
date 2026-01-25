@@ -8,6 +8,7 @@ import { getAppList, type AppItem } from "../api/app";
 import { createPresetByUser, updatePresetByUser } from "../api/preset";
 import { setSecretKey } from "../api/req";
 import { RefreshIcon } from 'tdesign-icons-vue-next';
+import { getGrsProviderKey } from "../api/provider";
 const props = defineProps<{ api: API; secretReady: boolean }>();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -385,35 +386,6 @@ const rgbaToPngBlob = async (params: {
   return blob;
 };
 
-const uploadPng = async (params: {
-  uploadUrl: string;
-  apiKey: string;
-  apiKeyHeaderName?: string;
-  fileFieldName?: string;
-  blob: Blob;
-}) => {
-  const apiKeyHeaderName = params.apiKeyHeaderName || "apikey";
-  const fileFieldName = params.fileFieldName || "file";
-
-  const form = new FormData();
-  form.append(fileFieldName, params.blob, "selection.png");
-
-  const res = await axios.post(params.uploadUrl, form, {
-    headers: {
-      [apiKeyHeaderName]: params.apiKey,
-    },
-  });
-
-  const data = res.data;
-  if (typeof data === "string") return data;
-  if (data && typeof data === "object") {
-    if (typeof (data as any).url === "string") return (data as any).url;
-    if (typeof (data as any).data?.url === "string") return (data as any).data.url;
-    if (typeof (data as any).result?.url === "string") return (data as any).result.url;
-  }
-  throw new Error("Upload succeeded but no url field found in response");
-};
-
 const handleGenerate = async () => {
   const cfg = await props.api.getGlobalConfig();
   if (!cfg.apiServer) throw new Error("请先在设置里选择模型服务器");
@@ -457,11 +429,15 @@ const handleGenerate = async () => {
       shutProgress: false,
     };
 
+    const providerKey = await getGrsProviderKey();
+    if (providerKey === "") {
+      MessagePlugin.error("请先在网站配置模型供应商密钥")
+    }
     const res = await fetch("https://grsai.dakka.com.cn/v1/draw/nano-banana", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: "Bearer sk-6fdefed1b3af4140ad91ffa8f76463e6",
+        Authorization: `Bearer ${providerKey}`,
       },
       body: JSON.stringify(body),
     });
@@ -588,11 +564,11 @@ const handleGenerate = async () => {
       <t-form-item label="分辨率">
         <t-select v-model="selectedResolution" :options="resolutionOptions" />
       </t-form-item>
-
+      <!--
       <t-form-item label="移除透明通道">
         <t-switch v-model="outputForceOpaque" />
       </t-form-item>
-
+      -->
       <t-form-item>
         <div class="gen-area">
           <t-button theme="primary" block :loading="isGenerating" @click="handleGenerate">生成</t-button>

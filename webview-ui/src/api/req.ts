@@ -14,17 +14,19 @@ export const setSecretKey = (key: string | undefined) => {
   secretKey = key || undefined;
 };
 
-export type ApiServiceName = "preset" | "library" | "user";
+export type ApiServiceName = "preset" | "library" | "provider" | "user";
 
 const getServiceBaseURL = (service: ApiServiceName) => {
   const env = (import.meta as any)?.env || {};
 
   const presetURL = env.VITE_API_BASE_URL || "http://127.0.0.1:8892";
   const libraryURL = env.VITE_LIBRARY_API_BASE_URL || "http://127.0.0.1:8893";
+  const providerURL = env.VITE_PROVIDER_API_BASE_URL || "http://127.0.0.1:8895";
   const userURL = env.VITE_BASE_API_BASE_URL || "http://127.0.0.1:8890";
 
   if (service === "library") return libraryURL;
   if (service === "user") return userURL;
+  if (service === "provider") return providerURL;
   return presetURL;
 };
 
