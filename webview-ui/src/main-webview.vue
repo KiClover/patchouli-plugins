@@ -3,7 +3,16 @@ import { ref } from "vue";
 
 import * as webviewAPI from "./webview-api";
 import { initWebview } from "./webview-setup";
+import { setSecretKey } from "./api/req";
 const { api, page } = initWebview(webviewAPI);
+
+const secretReady = ref(false);
+
+(async () => {
+  const cfg = await api.getGlobalConfig();
+  setSecretKey(cfg.apiKey || undefined);
+  secretReady.value = true;
+})();
 
 import ProcessView from "./views/ProcessView.vue";
 import CommunityView from "./views/CommunityView.vue";
@@ -19,7 +28,7 @@ document.documentElement.setAttribute('theme-mode', 'dark');
   <div class="app-root t-theme-dark">
     <t-tabs v-model:value="tabValue" placement="top" size="medium">
       <t-tab-panel value="process" label="魔导书">
-        <ProcessView :api="api" />
+        <ProcessView :api="api" :secret-ready="secretReady" />
       </t-tab-panel>
       <t-tab-panel value="community" label="大图书馆">
         <CommunityView />

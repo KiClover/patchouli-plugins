@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import axios from "axios";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { MessagePlugin } from "tdesign-vue-next";
 
 import type { API } from "../../../src/api/api";
 import { getAppList, type AppItem } from "../api/app";
 import { setSecretKey } from "../api/req";
 import { RefreshIcon } from 'tdesign-icons-vue-next';
-const props = defineProps<{ api: API }>();
+const props = defineProps<{ api: API; secretReady: boolean }>();
 
 type RatioOption = { label: string; value: string };
 
@@ -88,13 +88,19 @@ watch(selectedPreset, (id) => {
   prompt.value = found.prompt || "";
 });
 
-onMounted(() => {
-  (async () => {
+let presetsLoadedOnce = false;
+watch(
+  () => props.secretReady,
+  async (ready) => {
+    if (!ready) return;
+    if (presetsLoadedOnce) return;
+    presetsLoadedOnce = true;
     const cfg = await props.api.getGlobalConfig();
     setSecretKey(cfg.apiKey || undefined);
     await loadPresets();
-  })();
-});
+  },
+  { immediate: true },
+);
 
 
 const blobToDataUrl = async (blob: Blob): Promise<string> => {
@@ -136,6 +142,27 @@ const parseJsonLinesFromText = (text: string) => {
     }
   }
   return objs;
+};
+
+const parseSseDataEvents = (eventText: string): any[] => {
+  const lines = eventText.split(/\r?\n/);
+  const dataLines: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    if (!trimmed) continue;
+    if (trimmed.startsWith("data:")) {
+      dataLines.push(trimmed.slice("data:".length).trimStart());
+    }
+  }
+
+  const data = dataLines.join("\n").trim();
+  if (!data || data === "[DONE]") return [];
+
+  try {
+    return [JSON.parse(data)];
+  } catch {
+    return [];
+  }
 };
 
 const rgbaToPngBlob = async (params: {
@@ -235,6 +262,7 @@ const handleGenerate = async () => {
   genStatus.value = "running";
   genError.value = "";
   genResultUrl.value = "";
+  MessagePlugin.info("开始生成...");
 
   try {
     if (cfg.apiServer !== "grsai") {
@@ -243,7 +271,7 @@ const handleGenerate = async () => {
 
     const refUrls = await getUploadFileDataUrls();
     const selectionDataUrl = await blobToDataUrl(blob);
-    const urls = [...refUrls, selectionDataUrl];
+    const urls = [selectionDataUrl, ...refUrls];
 
     const body = {
       model: selectedModel.value,
@@ -258,7 +286,7 @@ const handleGenerate = async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: "Bearer apikey",
+        Authorization: "Bearer sk-6fdefed1b3af4140ad91ffa8f76463e6",
       },
       body: JSON.stringify(body),
     });
@@ -278,11 +306,11 @@ const handleGenerate = async () => {
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      const parts = buffer.split(/\r?\n/);
-      buffer = parts.pop() || "";
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() || "";
 
-      for (const part of parts) {
-        const objs = parseJsonLinesFromText(part);
+      for (const eventText of events) {
+        const objs = parseSseDataEvents(eventText);
         for (const obj of objs) {
           if (typeof obj?.progress === "number") genProgress.value = obj.progress;
           if (typeof obj?.status === "string") genStatus.value = obj.status;
@@ -295,7 +323,7 @@ const handleGenerate = async () => {
     }
 
     if (buffer.trim()) {
-      const objs = parseJsonLinesFromText(buffer);
+      const objs = parseSseDataEvents(buffer);
       for (const obj of objs) {
         if (typeof obj?.progress === "number") genProgress.value = obj.progress;
         if (typeof obj?.status === "string") genStatus.value = obj.status;
@@ -312,7 +340,25 @@ const handleGenerate = async () => {
 
     if (genStatus.value === "succeeded") {
       MessagePlugin.success("生成完成");
+
+      if (genResultUrl.value) {
+        const fn = (props.api as any).placeImageUrlToSelectionAndMask;
+        console.log("placeImageUrlToSelectionAndMask typeof:", typeof fn);
+        if (typeof fn !== "function") {
+          throw new Error("当前宿主未实现：将结果图写回选区并添加蒙版");
+        }
+        MessagePlugin.info("正在回写到选区并添加蒙版...");
+        await fn({
+          url: genResultUrl.value,
+          fileName: "patchouli-res.png",
+        });
+        MessagePlugin.success("已回写到选区并添加蒙版");
+      }
     }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    MessagePlugin.error(msg || "生成失败");
+    throw e;
   } finally {
     isGenerating.value = false;
   }
@@ -342,10 +388,12 @@ const handleGenerate = async () => {
       <t-form-item label="参考图上传">
         <div class="upload-block">
           <t-upload
-            v-model="uploadFiles"
+            v-model:files="uploadFiles"
             accept=".jpg,.jpeg,.png"
             :max="maxUpload"
             theme="image"
+            :auto-upload="false"
+            multiple
             :tips="uploadTips"
           />
         </div>
@@ -374,7 +422,6 @@ const handleGenerate = async () => {
       <t-form-item>
         <t-button theme="primary" block :loading="isGenerating" @click="handleGenerate">生成</t-button>
       </t-form-item>
-
       <t-form-item>
         <t-progress :percentage="genProgress" />
         <div v-if="genStatus" style="margin-top: 8px; font-size: 12px;">
@@ -384,13 +431,14 @@ const handleGenerate = async () => {
         </div>
       </t-form-item>
 
-      <t-form-item v-if="previewUrl" label="选区预览">
+      <!--<t-form-item v-if="previewUrl" label="选区预览">
           <img
             class="preview-img"
             :key="previewUrl"
             :src="previewUrl"
           />
       </t-form-item>
+      !-->
     </t-form>
   </div>
 </template>

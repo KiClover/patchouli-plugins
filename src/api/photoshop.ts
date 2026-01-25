@@ -1,7 +1,136 @@
-import { photoshop } from "../globals";
+import { photoshop, uxp } from "../globals";
 
 export const notify = async (message: string) => {
   await photoshop.app.showAlert(message);
+};
+
+const urlFileName = (url: string) => {
+  try {
+    const u = new URL(url);
+    const base = u.pathname.split("/").pop() || "generated";
+    return base.includes(".") ? base : `${base}.png`;
+  } catch {
+    return "generated.png";
+  }
+};
+
+export const placeImageUrlToSelectionAndMask = async (params: {
+  url: string;
+  fileName?: string;
+}) => {
+  return await photoshop.core.executeAsModal(async () => {
+    const doc = photoshop.app.activeDocument;
+    if (!doc) throw new Error("No active document");
+    const selBounds = doc.selection?.bounds;
+    if (!selBounds) throw new Error("No selection");
+
+    // Save selection bounds as numbers (no channel creation to avoid PS dialogs)
+    const selLeft = typeof (selBounds as any).left === "number" ? (selBounds as any).left : Number((selBounds as any).left?.value ?? (selBounds as any).left);
+    const selTop = typeof (selBounds as any).top === "number" ? (selBounds as any).top : Number((selBounds as any).top?.value ?? (selBounds as any).top);
+    const selRight = typeof (selBounds as any).right === "number" ? (selBounds as any).right : Number((selBounds as any).right?.value ?? (selBounds as any).right);
+    const selBottom = typeof (selBounds as any).bottom === "number" ? (selBounds as any).bottom : Number((selBounds as any).bottom?.value ?? (selBounds as any).bottom);
+    const selW = Math.max(1, selRight - selLeft);
+    const selH = Math.max(1, selBottom - selTop);
+
+    // Download image
+    const res = await fetch(params.url);
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error(`Download image failed: ${res.status}${t ? ` - ${t}` : ""}`);
+    }
+
+    const buf = await res.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+
+    const tempFolder = await uxp.storage.localFileSystem.getTemporaryFolder();
+    const name = params.fileName || urlFileName(params.url);
+    const file = await tempFolder.createFile(name, { overwrite: true });
+    await file.write(bytes, { format: uxp.storage.formats.binary } as any);
+
+    const token = uxp.storage.localFileSystem.createSessionToken(file);
+
+    // Place the image (creates a smart object layer)
+    await photoshop.action.batchPlay(
+      [
+        {
+          _obj: "placeEvent",
+          null: {
+            _path: token,
+            _kind: "local",
+          },
+          _options: { dialogOptions: "dontDisplay" },
+        },
+      ],
+      {},
+    );
+
+    const layer = doc.activeLayers?.[0];
+    if (!layer) throw new Error("No active layer after placing image");
+    const layerId = (layer as any).id;
+
+    // Use DOM API for transform - more stable than batchPlay transform
+    const b0: any = layer.bounds;
+    const l0 = typeof b0?.left === "number" ? b0.left : Number(b0?.left?.value ?? b0?.left);
+    const t0 = typeof b0?.top === "number" ? b0.top : Number(b0?.top?.value ?? b0?.top);
+    const r0 = typeof b0?.right === "number" ? b0.right : Number(b0?.right?.value ?? b0?.right);
+    const btm0 = typeof b0?.bottom === "number" ? b0.bottom : Number(b0?.bottom?.value ?? b0?.bottom);
+    const w0 = Math.max(1, r0 - l0);
+    const h0 = Math.max(1, btm0 - t0);
+
+    // Move layer to top-left of selection first
+    await (layer as any).translate(selLeft - l0, selTop - t0);
+
+    // Scale layer to match selection size (from top-left anchor)
+    const sx = (selW / w0) * 100;
+    const sy = (selH / h0) * 100;
+    await (layer as any).scale(sx, sy, photoshop.constants.AnchorPosition.TOPLEFT);
+
+    // Restore selection using rectangle coordinates (no channel to avoid PS dialogs)
+    await photoshop.action.batchPlay(
+      [
+        {
+          _obj: "set",
+          _target: [{ _ref: "channel", _property: "selection" }],
+          to: {
+            _obj: "rectangle",
+            top: { _unit: "pixelsUnit", _value: selTop },
+            left: { _unit: "pixelsUnit", _value: selLeft },
+            bottom: { _unit: "pixelsUnit", _value: selBottom },
+            right: { _unit: "pixelsUnit", _value: selRight },
+          },
+          _options: { dialogOptions: "dontDisplay" },
+        },
+      ],
+      {},
+    );
+
+    // Ensure the placed layer is targeted before creating the mask
+    await photoshop.action.batchPlay(
+      [
+        {
+          _obj: "select",
+          _target: [{ _ref: "layer", _id: layerId }],
+          makeVisible: false,
+          _options: { dialogOptions: "dontDisplay" },
+        },
+      ],
+      {},
+    );
+
+    // Create layer mask from selection
+    return await photoshop.action.batchPlay(
+      [
+        {
+          _obj: "make",
+          new: { _class: "channel" },
+          at: { _ref: "channel", _enum: "channel", _value: "mask" },
+          using: { _enum: "userMaskEnabled", _value: "revealSelection" },
+          _options: { dialogOptions: "dontDisplay" },
+        },
+      ],
+      {},
+    );
+  }, { commandName: "Place Image URL To Selection And Mask" });
 };
 
 

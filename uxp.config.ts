@@ -114,6 +114,11 @@ const manifest: UXP_Manifest = {
         "https://svelte.dev",
         "https://reactjs.org",
         "https://vuejs.org/",
+        "https://file4.aitohumanize.com",
+        "https://file1.aitohumanize.com",
+        "https://file2.aitohumanize.com",
+        "https://file3.aitohumanize.com",
+        "https://file5.aitohumanize.com",
         "http://localhost:8892",
         `ws://localhost:${extraPrefs.hotReloadPort}`, // Required for hot reload
       ],
