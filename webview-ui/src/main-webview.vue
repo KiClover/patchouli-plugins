@@ -8,9 +8,17 @@ const { api, page } = initWebview(webviewAPI);
 
 const secretReady = ref(false);
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 (async () => {
-  const cfg = await api.getGlobalConfig();
-  setSecretKey(cfg.apiKey || undefined);
+  let apiKey: string | undefined;
+  for (let i = 0; i < 10; i++) {
+    const cfg = await api.getGlobalConfig();
+    apiKey = cfg.apiKey || undefined;
+    if (apiKey) break;
+    await sleep(200);
+  }
+  setSecretKey(apiKey);
   secretReady.value = true;
 })();
 
@@ -35,7 +43,7 @@ document.documentElement.setAttribute('theme-mode', 'dark');
         <CommunityView />
       </t-tab-panel>
       <t-tab-panel value="preset" label="预设">
-        <PresetView />
+        <PresetView :api="api" :secret-ready="secretReady" />
       </t-tab-panel>
       <t-tab-panel value="settings" label="设置">
         <SettingsView :api="api" />

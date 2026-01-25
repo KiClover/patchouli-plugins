@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import axios from "axios";
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { MessagePlugin } from "tdesign-vue-next";
 
 import type { API } from "../../../src/api/api";
@@ -8,6 +8,8 @@ import { getAppList, type AppItem } from "../api/app";
 import { setSecretKey } from "../api/req";
 import { RefreshIcon } from 'tdesign-icons-vue-next';
 const props = defineProps<{ api: API; secretReady: boolean }>();
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 type RatioOption = { label: string; value: string };
 
@@ -88,20 +90,21 @@ watch(selectedPreset, (id) => {
   prompt.value = found.prompt || "";
 });
 
-let presetsLoadedOnce = false;
-watch(
-  () => props.secretReady,
-  async (ready) => {
-    if (!ready) return;
-    if (presetsLoadedOnce) return;
-    presetsLoadedOnce = true;
+const loadConfig = async () => {
+  let apiKey: string | undefined;
+  for (let i = 0; i < 10; i++) {
     const cfg = await props.api.getGlobalConfig();
-    setSecretKey(cfg.apiKey || undefined);
-    await loadPresets();
-  },
-  { immediate: true },
-);
+    apiKey = cfg.apiKey || undefined;
+    if (apiKey) break;
+    await sleep(200);
+  }
+  setSecretKey(apiKey);
+};
 
+onMounted(async () => {
+  await loadConfig();
+  await loadPresets();
+});
 
 const blobToDataUrl = async (blob: Blob): Promise<string> => {
   return await new Promise((resolve, reject) => {

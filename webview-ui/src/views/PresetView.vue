@@ -2,6 +2,9 @@
 import { computed, onMounted, ref } from "vue";
 import { DialogPlugin, MessagePlugin } from "tdesign-vue-next";
 
+import type { API } from "../../../src/api/api";
+import { setSecretKey } from "../api/req";
+
 import {
   createPresetByUser,
   deletePresetByUser,
@@ -9,6 +12,10 @@ import {
   updatePresetByUser,
   type PresetInfo,
 } from "../api/preset";
+
+const props = defineProps<{ api: API; secretReady: boolean }>();
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const loading = ref(false);
 const list = ref<PresetInfo[]>([]);
@@ -162,8 +169,20 @@ const copyPrompt = async (text: string) => {
   }
 };
 
-onMounted(() => {
-  loadList();
+const loadConfig = async () => {
+  let apiKey: string | undefined;
+  for (let i = 0; i < 10; i++) {
+    const cfg = await props.api.getGlobalConfig();
+    apiKey = cfg.apiKey || undefined;
+    if (apiKey) break;
+    await sleep(200);
+  }
+  setSecretKey(apiKey);
+};
+
+onMounted(async () => {
+  await loadConfig();
+  await loadList();
 });
 </script>
 

@@ -10,6 +10,7 @@ type ApiEnvelope<T> = {
 let secretKey: string | undefined;
 
 export const setSecretKey = (key: string | undefined) => {
+  console.log("[req] setSecretKey called:", key ? `${key.slice(0, 6)}...` : "(empty)");
   secretKey = key || undefined;
 };
 
@@ -24,7 +25,8 @@ const instance = axios.create({
 let lastBackendDownToastAt = 0;
 const BACKEND_DOWN_TOAST_COOLDOWN_MS = 5_000;
 
-instance.interceptors.request.use((config) => {
+instance.interceptors.request.use((config: any) => {
+  console.log("[req] interceptor:", config.url, "secretKey=", secretKey ? `${secretKey.slice(0, 6)}...` : "(empty)");
   if (secretKey) {
     config.headers = config.headers || {};
     (config.headers as any).SecretKey = secretKey;
@@ -33,8 +35,8 @@ instance.interceptors.request.use((config) => {
 });
 
 instance.interceptors.response.use(
-  (res) => res,
-  (err) => {
+  (res: any) => res,
+  (err: any) => {
     const noResponse = !err?.response;
     const isTimeout = err?.code === "ECONNABORTED";
     const isNetworkError =
