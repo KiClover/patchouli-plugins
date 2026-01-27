@@ -103,6 +103,14 @@ const commitServer = async () => {
 onMounted(() => {
   loadConfig();
 });
+
+const openUrl = async (url: string) => {
+  await props.api.openURL(url);
+};
+
+const joinGroup = async () => {
+  await openUrl("https://jq.qq.com/?_wv=1027&k=930167129");
+};
 </script>
 
 <template>
@@ -110,6 +118,9 @@ onMounted(() => {
     <t-form label-width="90px" colon>
       <t-form-item label="后端Token">
         <t-input v-model="apiKey" placeholder="请输入 Key" @blur="saveKey" />
+      </t-form-item>
+      <t-form-item label="获取Token">
+        <t-button theme="primary" @click="openUrl('https://console.patchouli.kiclover.com')">前往</t-button>
       </t-form-item>
 
       <t-form-item label="模型服务器">
@@ -126,11 +137,12 @@ onMounted(() => {
         <t-button theme="primary" :loading="checkingUpdate" @click="checkUpdate">检查更新</t-button>
       </t-form-item>
       <t-form-item label="群组">
-        <t-input disabled placeholder="930167129" />
+        <t-input readonly placeholder="930167129" />
+        <t-button theme="primary" @click="joinGroup">加入群组</t-button>
       </t-form-item>
     </t-form>
 
-    <div class="settings-footer">Copyright @ 2026 PatchouliPanel & KiClover. All Rights Reserved</div>
+    <div class="settings-footer">Copyright @ 2026 <a href="#" @click.prevent="openUrl('https://patchouli.kiclover.com')">PatchouliPanel</a> & <a href="#" @click.prevent="openUrl('https://kiclover.com')">KiClover</a>. All Rights Reserved</div>
   </div>
 </template>
 
