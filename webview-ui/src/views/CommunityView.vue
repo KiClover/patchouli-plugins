@@ -2,8 +2,14 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { MessagePlugin } from "tdesign-vue-next";
 
+import type { API } from "../../../src/api/api";
 import { addCommunityPresetToMine, getCommunityPresetList, type LibPresetInfo } from "../api/community";
 import { getBaseUserById, type BaseUserInfo } from "../api/user";
+import { setSecretKey } from "../api/req";
+
+const props = defineProps<{ api: API; secretReady: boolean }>();
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const loading = ref(false);
 const list = ref<LibPresetInfo[]>([]);
@@ -83,7 +89,19 @@ const avatarText = (name?: string) => {
   return v.slice(0, 1).toUpperCase();
 };
 
+const loadConfig = async () => {
+  let apiKey: string | undefined;
+  for (let i = 0; i < 10; i++) {
+    const cfg = await props.api.getGlobalConfig();
+    apiKey = cfg.apiKey || undefined;
+    if (apiKey) break;
+    await sleep(200);
+  }
+  setSecretKey(apiKey);
+};
+
 onMounted(async () => {
+  await loadConfig();
   await loadList();
 });
 </script>

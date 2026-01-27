@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { MessagePlugin, NotifyPlugin } from "tdesign-vue-next";
 
 import type { API } from "../../../src/api/api";
 import { setSecretKey } from "../api/req";
+
+const currentVersion = "0.1.1"
 
 const props = defineProps<{ api: API }>();
 
@@ -14,10 +17,76 @@ const apiServerOptions = [
   { label: "GrsAI", value: "grsai" },
 ];
 
+const checkingUpdate = ref(false);
+
+type VersionInfo = {
+  version: string;
+  is_must: boolean;
+  description: string;
+};
+
+const normalizeVersion = (v: string) => (v || "").trim().replace(/^v/i, "");
+
+const parseVersion = (v: string) => {
+  const s = normalizeVersion(v);
+  const parts = s.split(".").map((x) => Number.parseInt(x, 10));
+  const major = Number.isFinite(parts[0]) ? parts[0] : 0;
+  const minor = Number.isFinite(parts[1]) ? parts[1] : 0;
+  const patch = Number.isFinite(parts[2]) ? parts[2] : 0;
+  return { major, minor, patch };
+};
+
+const compareVersion = (a: string, b: string) => {
+  const av = parseVersion(a);
+  const bv = parseVersion(b);
+  if (av.major !== bv.major) return av.major > bv.major ? 1 : -1;
+  if (av.minor !== bv.minor) return av.minor > bv.minor ? 1 : -1;
+  if (av.patch !== bv.patch) return av.patch > bv.patch ? 1 : -1;
+  return 0;
+};
+
+const notifyUpdate = async (info: VersionInfo) => {
+  const title = info.is_must ? "发现破坏性更新,请尽快更新" : "发现新版本";
+  const body = `最新版本：${info.version}\n${info.description || ""}`.trim();
+
+  NotifyPlugin.info({
+    title,
+    content: body,
+    duration: 0,
+    closeBtn: true,
+  });
+};
+
+const checkUpdate = async () => {
+  if (checkingUpdate.value) return;
+  checkingUpdate.value = true;
+  try {
+    const url = "https://object.cloud.kiclover.com/patchouli-version.json";
+    const res = await fetch(url, { method: "GET" });
+    if (!res.ok) throw new Error(`请求失败: ${res.status} ${res.statusText}`);
+    const info = (await res.json()) as VersionInfo;
+    if (!info || typeof info !== "object") throw new Error("无效的版本信息");
+    if (!info.version) throw new Error("版本号为空");
+
+    const cmp = compareVersion(info.version, currentVersion);
+    if (cmp <= 0) {
+      MessagePlugin.success(`当前已是最新版本（${currentVersion}）`);
+      return;
+    }
+
+    await notifyUpdate(info);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    MessagePlugin.error(`检查更新失败：${msg}`);
+  } finally {
+    checkingUpdate.value = false;
+  }
+};
+
 const loadConfig = async () => {
   const cfg = await props.api.getGlobalConfig();
   apiKey.value = cfg.apiKey || "";
-  apiServer.value = cfg.apiServer || apiServerOptions[0].value;
+  apiServer.value = cfg.apiServer || apiServerOptions[1].value;
   setSecretKey(apiKey.value || undefined);
 };
 
@@ -52,20 +121,28 @@ onMounted(() => {
           @blur="commitServer"
         />
       </t-form-item>
-
       <t-form-item label="版本检查">
-        <t-input disabled placeholder="v1.0.0" />
-        <t-button theme="primary">检查更新</t-button>
+        <t-input disabled :placeholder="`v${currentVersion}`" />
+        <t-button theme="primary" :loading="checkingUpdate" @click="checkUpdate">检查更新</t-button>
       </t-form-item>
-      <t-form-item label="PowerBy">
-        <t-input disabled placeholder="佰分摆/KiClover" />
+      <t-form-item label="群组">
+        <t-input disabled placeholder="930167129" />
       </t-form-item>
     </t-form>
+
+    <div class="settings-footer">Copyright @ 2026 PatchouliPanel & KiClover. All Rights Reserved</div>
   </div>
 </template>
 
 <style scoped lang="scss">
 .settings-view {
   padding: 12px;
+}
+
+.settings-footer {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 12px;
+  opacity: 0.7;
 }
 </style>

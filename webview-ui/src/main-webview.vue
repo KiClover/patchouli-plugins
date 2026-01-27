@@ -40,7 +40,7 @@ document.documentElement.setAttribute('theme-mode', 'dark');
         <ProcessView :api="api" :secret-ready="secretReady" />
       </t-tab-panel>
       <t-tab-panel value="community" label="大图书馆">
-        <CommunityView />
+        <CommunityView :api="api" :secret-ready="secretReady" />
       </t-tab-panel>
       <t-tab-panel value="preset" label="魔导书">
         <PresetView :api="api" :secret-ready="secretReady" />

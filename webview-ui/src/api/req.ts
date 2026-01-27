@@ -19,10 +19,15 @@ export type ApiServiceName = "preset" | "library" | "provider" | "user";
 const getServiceBaseURL = (service: ApiServiceName) => {
   const env = (import.meta as any)?.env || {};
 
-  const presetURL = env.VITE_API_BASE_URL || "http://127.0.0.1:8892";
-  const libraryURL = env.VITE_LIBRARY_API_BASE_URL || "http://127.0.0.1:8893";
-  const providerURL = env.VITE_PROVIDER_API_BASE_URL || "http://127.0.0.1:8895";
-  const userURL = env.VITE_BASE_API_BASE_URL || "http://127.0.0.1:8890";
+  const presetURL = env.VITE_API_BASE_URL || "http://preset.ai.pachouli.kiclover.com";
+  const libraryURL = env.VITE_LIBRARY_API_BASE_URL || "http://library.ai.pachouli.kiclover.com";
+  const providerURL = env.VITE_PROVIDER_API_BASE_URL || "http://provider.ai.pachouli.kiclover.com";
+  const userURL = env.VITE_BASE_API_BASE_URL || "http://user.system.pachouli.kiclover.com";
+
+  //const presetURL = env.VITE_API_BASE_URL || "http://127.0.0.1:8892";
+  //const libraryURL = env.VITE_LIBRARY_API_BASE_URL || "http://127.0.0.1:8893";
+  //const providerURL = env.VITE_PROVIDER_API_BASE_URL || "http://127.0.0.1:8895";
+  //const userURL = env.VITE_BASE_API_BASE_URL || "http://127.0.0.1:8890";
 
   if (service === "library") return libraryURL;
   if (service === "user") return userURL;

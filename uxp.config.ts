@@ -9,7 +9,7 @@ const extraPrefs = {
   uniqueIds: true,
 };
 
-export const id = "com.virtual.uxp"; 
+export const id = "com.patchouli.uxp";
 const name = "帕秋莉";
 
 const manifest: UXP_Manifest = {
@@ -114,12 +114,19 @@ const manifest: UXP_Manifest = {
         "https://svelte.dev",
         "https://reactjs.org",
         "https://vuejs.org/",
+        "https://object.cloud.kiclover.com",
         "https://file4.aitohumanize.com",
         "https://file1.aitohumanize.com",
         "https://file2.aitohumanize.com",
         "https://file3.aitohumanize.com",
         "https://file5.aitohumanize.com",
+        "https://*.aitohumanize.com",
         "http://localhost:8892",
+        "http://preset.ai.pachouli.kiclover.com",
+        "http://library.ai.pachouli.kiclover.com",
+        "http://user.system.pachouli.kiclover.com",
+        "http://provider.ai.pachouli.kiclover.com",
+
         `ws://localhost:${extraPrefs.hotReloadPort}`, // Required for hot reload
       ],
     },
