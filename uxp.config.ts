@@ -127,6 +127,8 @@ const manifest: UXP_Manifest = {
         "http://library.ai.pachouli.kiclover.com",
         "http://user.system.pachouli.kiclover.com",
         "http://provider.ai.pachouli.kiclover.com",
+        "https://grsai.dakka.com.cn",
+        "https://*.qiniup.com",
 
         `ws://localhost:${extraPrefs.hotReloadPort}`, // Required for hot reload
       ],

@@ -8,7 +8,6 @@ import { getAppList, type AppItem } from "../api/app";
 import { createPresetByUser, updatePresetByUser } from "../api/preset";
 import { setSecretKey } from "../api/req";
 import { RefreshIcon } from 'tdesign-icons-vue-next';
-import { getGrsProviderKey } from "../api/provider";
 const props = defineProps<{ api: API; secretReady: boolean }>();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -301,6 +300,75 @@ const blobToDataUrl = async (blob: Blob): Promise<string> => {
   });
 };
 
+type GrsUploadTokenZHResponse = {
+  data: {
+    token: string;
+    key: string;
+    url: string;
+    domain: string;
+  };
+};
+
+const inferImageExt = (blob: Blob): string => {
+  const t = (blob.type || "").toLowerCase();
+  if (t.includes("png")) return "png";
+  if (t.includes("jpeg") || t.includes("jpg")) return "jpg";
+  return "png";
+};
+
+const uploadBlobToGrsai = async (blob: Blob, providerKey: string): Promise<string> => {
+  const ext = inferImageExt(blob);
+  const tokenRes = await fetch("https://grsai.dakka.com.cn/client/resource/newUploadTokenZH", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${providerKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ sux: ext }),
+  });
+  if (!tokenRes.ok) {
+    const text = await tokenRes.text().catch(() => "");
+    throw new Error(`获取上传 Token 失败: ${tokenRes.status} ${tokenRes.statusText}${text ? ` - ${text}` : ""}`);
+  }
+  const tokenJson = (await tokenRes.json().catch(() => null)) as GrsUploadTokenZHResponse | null;
+  const token = (tokenJson as any)?.data?.token;
+  const key = (tokenJson as any)?.data?.key;
+  const url = (tokenJson as any)?.data?.url;
+  const domain = (tokenJson as any)?.data?.domain;
+  if (!token || !key || !url || !domain) throw new Error("上传 Token 响应缺少字段");
+
+  const form = new FormData();
+  form.append("token", String(token));
+  form.append("key", String(key));
+  form.append("file", blob, `ref.${ext}`);
+
+  const uploadRes = await fetch(String(url), {
+    method: "POST",
+    body: form,
+  });
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text().catch(() => "");
+    throw new Error(`文件上传失败: ${uploadRes.status} ${uploadRes.statusText}${text ? ` - ${text}` : ""}`);
+  }
+  return `${String(domain).replace(/\/$/, "")}/${String(key).replace(/^\//, "")}`;
+};
+
+const getUploadFileUrlsForGrsai = async (providerKey: string): Promise<string[]> => {
+  const urls: string[] = [];
+  for (const item of uploadFiles.value || []) {
+    const raw: any =
+      (item as any)?.raw ||
+      (item as any)?.file ||
+      (item as any)?.originFileObj ||
+      (item as any)?.response?.raw;
+    if (!raw) continue;
+    if (raw instanceof Blob) {
+      urls.push(await uploadBlobToGrsai(raw, providerKey));
+    }
+  }
+  return urls;
+};
+
 const getUploadFileDataUrls = async (): Promise<string[]> => {
   const urls: string[] = [];
   for (const item of uploadFiles.value || []) {
@@ -386,7 +454,23 @@ const rgbaToPngBlob = async (params: {
       })()
     : u8;
 
-  const imageData = new ImageData(u8ForPreview, width, height);
+  const imageData =
+    typeof (globalThis as any).ImageData === "function"
+      ? new (globalThis as any).ImageData(u8ForPreview, width, height)
+      : (() => {
+          const anyCtx: any = ctx as any;
+          if (typeof anyCtx.createImageData === "function") {
+            const img = anyCtx.createImageData(width, height);
+            img.data.set(u8ForPreview);
+            return img;
+          }
+          if (typeof anyCtx.getImageData === "function") {
+            const img = anyCtx.getImageData(0, 0, width, height);
+            img.data.set(u8ForPreview);
+            return img;
+          }
+          throw new Error("Canvas ImageData API not available in this environment");
+        })();
   ctx.putImageData(imageData, 0, 0);
 
   const blob: Blob = await new Promise((resolve, reject) => {
@@ -403,22 +487,27 @@ const handleGenerate = async () => {
   const cfg = await props.api.getGlobalConfig();
   if (!cfg.apiServer) throw new Error("请先在设置里选择模型服务器");
 
-  const sel = await props.api.getCurrentSelectionRgba?.();
-  if (!sel) {
-    MessagePlugin.warning("未获取到选区像素：请确认已打开文档并创建选区");
-    return;
+  if (cfg.apiServer === "grsai") {
+    const sel = await props.api.getCurrentSelectionPngUrl?.({ forceOpaque: outputForceOpaque.value } as any);
+    if (!sel || !(sel as any).url) {
+      MessagePlugin.warning("未获取到选区像素：请确认已打开文档并创建选区");
+      return;
+    }
+    previewUrl.value = (sel as any).url;
+    if (previewObjectUrl.value) URL.revokeObjectURL(previewObjectUrl.value);
+    previewObjectUrl.value = null;
+  } else {
+    const sel = await props.api.getCurrentSelectionRgba?.();
+    if (!sel) {
+      MessagePlugin.warning("未获取到选区像素：请确认已打开文档并创建选区");
+      return;
+    }
+
+    const blob = await rgbaToPngBlob(sel as any);
+    previewUrl.value = await blobToDataUrl(blob);
+    if (previewObjectUrl.value) URL.revokeObjectURL(previewObjectUrl.value);
+    previewObjectUrl.value = URL.createObjectURL(blob);
   }
-
-  const blob = await rgbaToPngBlob(sel as any);
-
-  previewUrl.value = await blobToDataUrl(blob);
-
-  if (previewObjectUrl.value) URL.revokeObjectURL(previewObjectUrl.value);
-  previewObjectUrl.value = URL.createObjectURL(blob);
-
-  console.log("preview dataUrl prefix:", previewUrl.value?.slice(0, 32));
-  console.log("preview dataUrl length:", previewUrl.value?.length);
-  console.log("preview objectUrl:", previewObjectUrl.value);
 
   isGenerating.value = true;
   genProgress.value = 0;
@@ -432,9 +521,17 @@ const handleGenerate = async () => {
       throw new Error("当前仅实现 GrsAI 模型服务器");
     }
 
-    const refUrls = await getUploadFileDataUrls();
-    const selectionDataUrl = await blobToDataUrl(blob);
-    const urls = [selectionDataUrl, ...refUrls];
+    const providerKey = await props.api.getGrsProviderKey?.();
+    if (!providerKey) {
+      MessagePlugin.error("请先在网站配置模型供应商密钥");
+      return;
+    }
+
+    const selectionUrl = String(previewUrl.value || "").trim();
+    if (!selectionUrl) throw new Error("选区图片 URL 为空");
+
+    const refUrls = await getUploadFileUrlsForGrsai(providerKey);
+    const urls = [selectionUrl, ...refUrls];
 
     const body = {
       model: selectedModel.value,
@@ -445,10 +542,6 @@ const handleGenerate = async () => {
       shutProgress: false,
     };
 
-    const providerKey = await getGrsProviderKey();
-    if (providerKey === "") {
-      MessagePlugin.error("请先在网站配置模型供应商密钥")
-    }
     const res = await fetch("https://grsai.dakka.com.cn/v1/draw/nano-banana", {
       method: "POST",
       headers: {

@@ -1,4 +1,5 @@
 import { photoshop, uxp } from "../globals";
+import { getGrsProviderKey } from "./uxp";
 
 export const notify = async (message: string) => {
   await photoshop.app.showAlert(message);
@@ -296,6 +297,186 @@ export const getCurrentSelectionRgba = async (params?: { applyGamma?: boolean })
             rgba: Array.from(rgba),
         };
     }, { commandName: "Cache Selection Image" });
+};
+
+type GrsUploadTokenZHResponse = {
+  data: {
+    token: string;
+    key: string;
+    url: string;
+    domain: string;
+  };
+};
+
+const uploadBlobToGrsai = async (blob: Blob, ext: string): Promise<string> => {
+  const providerKey = await getGrsProviderKey();
+  if (!providerKey) throw new Error("Provider Key 为空");
+
+  const tokenRes = await fetch("https://grsai.dakka.com.cn/client/resource/newUploadTokenZH", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${providerKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ sux: ext }),
+  });
+  if (!tokenRes.ok) {
+    const text = await tokenRes.text().catch(() => "");
+    throw new Error(`获取上传 Token 失败: ${tokenRes.status} ${tokenRes.statusText}${text ? ` - ${text}` : ""}`);
+  }
+  const tokenJson = (await tokenRes.json().catch(() => null)) as GrsUploadTokenZHResponse | null;
+  const token = (tokenJson as any)?.data?.token;
+  const key = (tokenJson as any)?.data?.key;
+  const url = (tokenJson as any)?.data?.url;
+  const domain = (tokenJson as any)?.data?.domain;
+  if (!token || !key || !url || !domain) throw new Error("上传 Token 响应缺少字段");
+
+  const form = new FormData();
+  form.append("token", String(token));
+  form.append("key", String(key));
+  form.append("file", blob, `selection.${ext}`);
+
+  const uploadRes = await fetch(String(url), {
+    method: "POST",
+    body: form,
+  });
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text().catch(() => "");
+    throw new Error(`文件上传失败: ${uploadRes.status} ${uploadRes.statusText}${text ? ` - ${text}` : ""}`);
+  }
+
+  return `${String(domain).replace(/\/$/, "")}/${String(key).replace(/^\//, "")}`;
+};
+
+const base64ToU8 = (b64: string): Uint8Array => {
+  const s = String(b64 || "").trim();
+  if (!s) return new Uint8Array(0);
+  const bin = (globalThis as any).atob ? (globalThis as any).atob(s) : "";
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 0xff;
+  return out;
+};
+
+const rgbaToRgbU8 = (rgba: Uint8Array): Uint8Array => {
+  const total = Math.floor(rgba.length / 4);
+  const rgb = new Uint8Array(total * 3);
+  // JPEG 不支持 alpha；这里把 RGBA 预乘合成到白底。
+  const bg = 255;
+  for (let i = 0; i < total; i++) {
+    const r = rgba[i * 4 + 0];
+    const g = rgba[i * 4 + 1];
+    const b = rgba[i * 4 + 2];
+    const a = rgba[i * 4 + 3] / 255;
+    rgb[i * 3 + 0] = Math.max(0, Math.min(255, Math.round(r * a + bg * (1 - a))));
+    rgb[i * 3 + 1] = Math.max(0, Math.min(255, Math.round(g * a + bg * (1 - a))));
+    rgb[i * 3 + 2] = Math.max(0, Math.min(255, Math.round(b * a + bg * (1 - a))));
+  }
+  return rgb;
+};
+
+const rgbaToJpegBlob = async (params: { rgba: Uint8Array; width: number; height: number }): Promise<Blob> => {
+  const { rgba, width, height } = params;
+  const imaging: any = (photoshop as any).imaging;
+  if (!imaging?.createImageDataFromBuffer || !imaging?.encodeImageData) {
+    throw new Error("Photoshop imaging.encodeImageData 不可用");
+  }
+
+  const rgb = rgbaToRgbU8(rgba);
+
+  const imgData = await imaging.createImageDataFromBuffer(rgb, {
+    width,
+    height,
+    components: 3,
+    chunky: true,
+    colorSpace: "RGB",
+    colorProfile: "sRGB IEC61966-2.1",
+  });
+
+  const jpegBase64 = await imaging.encodeImageData({ imageData: imgData, base64: true });
+  if (typeof jpegBase64 !== "string" || !jpegBase64) throw new Error("encodeImageData 返回无效数据");
+
+  const bytes = base64ToU8(jpegBase64);
+  if (!bytes.length) throw new Error("JPEG 编码结果为空");
+  return new Blob([bytes], { type: "image/jpeg" });
+};
+
+export const getCurrentSelectionPngUrl = async (params?: { applyGamma?: boolean; forceOpaque?: boolean }) => {
+  return await photoshop.core.executeAsModal(async () => {
+    const doc = photoshop.app.activeDocument;
+    if (!doc) return null;
+
+    const selBounds = doc.selection?.bounds;
+    if (!selBounds) return null;
+
+    const left = toPx(selBounds.left);
+    const top = toPx(selBounds.top);
+    const right = toPx(selBounds.right);
+    const bottom = toPx(selBounds.bottom);
+
+    const width = Math.max(1, Math.round(right - left));
+    const height = Math.max(1, Math.round(bottom - top));
+    const sourceBounds = { left, top, right, bottom, width, height };
+
+    const pixelsResult = await photoshop.imaging.getPixels({
+      documentID: doc.id,
+      sourceBounds,
+      colorSpace: "RGB",
+      applyAlpha: false,
+      hasAlpha: true,
+      colorProfile: "sRGB IEC61966-2.1",
+    } as any);
+    const rgbImageData = pixelsResult.imageData;
+    const rgbRaw = await rgbImageData.getData({} as any);
+    rgbImageData.dispose();
+
+    const totalPixels = width * height;
+    const rawLen = (rgbRaw as any)?.length ?? 0;
+    const comps = rawLen / totalPixels;
+    if (comps !== 3 && comps !== 4) {
+      throw new Error(`Unexpected pixel components: ${comps}`);
+    }
+
+    const rgbU8 = normalizeToUint8(rgbRaw, totalPixels * comps, "rgb");
+    const applyGamma = params?.applyGamma === true;
+    if (applyGamma) {
+      for (let i = 0; i < rgbU8.length; i += comps) {
+        rgbU8[i + 0] = srgbEncodeLut[rgbU8[i + 0]];
+        rgbU8[i + 1] = srgbEncodeLut[rgbU8[i + 1]];
+        rgbU8[i + 2] = srgbEncodeLut[rgbU8[i + 2]];
+      }
+    }
+
+    const selResult = await photoshop.imaging.getSelection({
+      documentID: doc.id,
+      sourceBounds,
+    } as any);
+    const selImageData = selResult.imageData;
+    const maskRaw = await selImageData.getData({} as any);
+    selImageData.dispose();
+
+    const maskU8 = normalizeToUint8(maskRaw, totalPixels, "mask");
+
+    const rgba = new Uint8Array(width * height * 4);
+    for (let i = 0; i < width * height; i++) {
+      const r = rgbU8[i * comps + 0];
+      const g = rgbU8[i * comps + 1];
+      const b = rgbU8[i * comps + 2];
+      const a0 = comps === 4 ? rgbU8[i * comps + 3] : 255;
+      const a = Math.round((a0 * maskU8[i]) / 255);
+      rgba[i * 4 + 0] = r;
+      rgba[i * 4 + 1] = g;
+      rgba[i * 4 + 2] = b;
+      rgba[i * 4 + 3] = a;
+    }
+
+    if (params?.forceOpaque === true) {
+      for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+    }
+
+    const blob = await rgbaToJpegBlob({ rgba, width, height });
+    const url = await uploadBlobToGrsai(blob, "jpg");
+    return { width, height, url };
+  }, { commandName: "Upload Selection PNG" });
 };
 
 export const getProjectInfo = async () => {

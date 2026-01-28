@@ -72,6 +72,60 @@ export const getGlobalConfig = async (): Promise<GlobalConfig> => {
   return await readConfig();
 };
 
+type ApiEnvelope<T> = {
+  code: number;
+  msg: string;
+  data: T;
+};
+
+type ProviderKeyInfo = {
+  key: string;
+};
+
+let cachedGrsProviderKey: string | undefined;
+let cachedGrsProviderKeyAt = 0;
+let pendingGrsProviderKey: Promise<string> | null = null;
+
+const GRS_PROVIDER_KEY_TTL_MS = 10 * 60 * 1000;
+
+export const getGrsProviderKey = async (forceRefresh?: boolean): Promise<string> => {
+  const now = Date.now();
+  if (!forceRefresh && cachedGrsProviderKey && now - cachedGrsProviderKeyAt < GRS_PROVIDER_KEY_TTL_MS) {
+    return cachedGrsProviderKey;
+  }
+  if (pendingGrsProviderKey) return pendingGrsProviderKey;
+
+  pendingGrsProviderKey = (async () => {
+    const cfg = await readConfig();
+    const secretKey = (cfg.apiKey || "").trim();
+    if (!secretKey) throw new Error("未设置后端Token");
+
+    const res = await fetch("http://provider.ai.pachouli.kiclover.com/app/grs", {
+      method: "GET",
+      headers: {
+        SecretKey: secretKey,
+      },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`获取 Provider Key 失败: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`);
+    }
+    const payload = (await res.json().catch(() => null)) as ApiEnvelope<ProviderKeyInfo> | null;
+    const key = (payload?.data?.key || "").trim();
+    if (!key) throw new Error(payload?.msg || "Provider Key 为空");
+
+    cachedGrsProviderKey = key;
+    cachedGrsProviderKeyAt = Date.now();
+    return key;
+  })();
+
+  try {
+    return await pendingGrsProviderKey;
+  } finally {
+    pendingGrsProviderKey = null;
+  }
+};
+
 export const setApiKey = async (apiKey: string) => {
   const cfg = await readConfig();
   cfg.apiKey = apiKey;
