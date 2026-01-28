@@ -10,16 +10,33 @@ const secretReady = ref(false);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const withTimeout = async <T>(p: Promise<T>, ms: number): Promise<T> => {
+  return await Promise.race([
+    p,
+    (async () => {
+      await sleep(ms);
+      throw new Error("getGlobalConfig timeout");
+    })(),
+  ]);
+};
+
 (async () => {
   let apiKey: string | undefined;
   for (let i = 0; i < 10; i++) {
-    const cfg = await api.getGlobalConfig();
-    apiKey = cfg.apiKey || undefined;
-    if (apiKey) break;
-    await sleep(200);
+    try {
+      const cfg = await withTimeout(api.getGlobalConfig(), 800);
+      apiKey = cfg.apiKey || undefined;
+      setSecretKey(apiKey);
+      secretReady.value = true;
+      break;
+    } catch {
+      await sleep(200);
+    }
   }
-  setSecretKey(apiKey);
-  secretReady.value = true;
+  if (!secretReady.value) {
+    setSecretKey(apiKey);
+    secretReady.value = true;
+  }
 })();
 
 import ProcessView from "./views/ProcessView.vue";

@@ -11,6 +11,16 @@ const props = defineProps<{ api: API; secretReady: boolean }>();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const withTimeout = async <T>(p: Promise<T>, ms: number): Promise<T> => {
+  return await Promise.race([
+    p,
+    (async () => {
+      await sleep(ms);
+      throw new Error("getGlobalConfig timeout");
+    })(),
+  ]);
+};
+
 const loading = ref(false);
 const list = ref<LibPresetInfo[]>([]);
 const total = computed(() => list.value.length);
@@ -92,9 +102,12 @@ const avatarText = (name?: string) => {
 const loadConfig = async () => {
   let apiKey: string | undefined;
   for (let i = 0; i < 10; i++) {
-    const cfg = await props.api.getGlobalConfig();
-    apiKey = cfg.apiKey || undefined;
-    if (apiKey) break;
+    try {
+      const cfg = await withTimeout(props.api.getGlobalConfig(), 800);
+      apiKey = cfg.apiKey || undefined;
+      if (apiKey) break;
+    } catch {
+    }
     await sleep(200);
   }
   setSecretKey(apiKey);

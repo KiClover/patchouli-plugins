@@ -13,6 +13,16 @@ const props = defineProps<{ api: API; secretReady: boolean }>();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const withTimeout = async <T>(p: Promise<T>, ms: number): Promise<T> => {
+  return await Promise.race([
+    p,
+    (async () => {
+      await sleep(ms);
+      throw new Error("getGlobalConfig timeout");
+    })(),
+  ]);
+};
+
 type RatioOption = { label: string; value: string };
 
 const PROCESS_STATE_KEY = "uxp-psai.process.state.v1";
@@ -229,9 +239,12 @@ watch(
 const loadConfig = async () => {
   let apiKey: string | undefined;
   for (let i = 0; i < 10; i++) {
-    const cfg = await props.api.getGlobalConfig();
-    apiKey = cfg.apiKey || undefined;
-    if (apiKey) break;
+    try {
+      const cfg = await withTimeout(props.api.getGlobalConfig(), 800);
+      apiKey = cfg.apiKey || undefined;
+      if (apiKey) break;
+    } catch {
+    }
     await sleep(200);
   }
   setSecretKey(apiKey);
