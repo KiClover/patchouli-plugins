@@ -545,10 +545,17 @@ const handleGenerate = async () => {
       </t-form-item>
 
       <t-form-item label="提示词">
-        <t-input v-model="prompt" />
-        <t-dropdown :options="moreOptions" @click="handleMoreClick">
-          <t-button theme="primary" :loading="saving">···</t-button>
-        </t-dropdown>
+        <t-textarea v-model="prompt"  :autosize="{ minRows: 3, maxRows: 5 }"/>
+      </t-form-item>
+      <t-form-item label="操作">
+        <t-row class="action-row" :gutter="12">
+          <t-col :span="6">
+            <t-button theme="primary" block :loading="handleMoreClick('save')">保存</t-button>
+          </t-col>
+          <t-col :span="6">
+            <t-button theme="primary" block :loading="handleMoreClick('saveAs')">另存为</t-button>
+          </t-col>
+        </t-row>
       </t-form-item>
 
       <t-form-item label="参考图上传">
@@ -631,6 +638,19 @@ const handleGenerate = async () => {
 <style scoped lang="scss">
 .process-view {
   padding: 12px;
+}
+
+.action-row {
+  width: 100%;
+  flex-wrap: nowrap;
+}
+
+.action-row :deep(.t-col) {
+  display: flex;
+}
+
+.action-row :deep(.t-button) {
+  width: 100%;
 }
 
 .upload-block {

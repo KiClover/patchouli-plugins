@@ -33,13 +33,20 @@ type GlobalConfig = {
 
 const CONFIG_FILE_NAME = "virtualai.config.json";
 
+const DEFAULT_CONFIG: GlobalConfig = {
+  apiServer: "grsai",
+};
+
 const getConfigFile = async () => {
   const fs = uxp.storage.localFileSystem;
   const folder = await fs.getDataFolder();
   const entries = await folder.getEntries();
   const existing = entries.find((e: { name: string }) => e.name === CONFIG_FILE_NAME);
   if (existing) return existing;
-  return await folder.createFile(CONFIG_FILE_NAME, { overwrite: true });
+  const file = await folder.createFile(CONFIG_FILE_NAME, { overwrite: true });
+  //@ts-ignore
+  await file.write(JSON.stringify(DEFAULT_CONFIG, null, 2));
+  return file;
 };
 
 const readConfig = async (): Promise<GlobalConfig> => {
