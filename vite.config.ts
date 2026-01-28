@@ -20,7 +20,7 @@ export default defineConfig({
     uxp(config, mode),
     vue(), 
   ],
-  base: "/",
+  base: mode === "dev" ? "/" : "./",
   build: {
     sourcemap: mode && ["dev", "build"].includes(mode) ? true : false,
     minify: false,

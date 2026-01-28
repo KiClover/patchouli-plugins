@@ -8,6 +8,7 @@ export default defineConfig({
     vue(), 
     viteSingleFile(),
   ],
+  base: "./",
   server: {
     port: 8081,
   },

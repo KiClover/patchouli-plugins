@@ -391,7 +391,10 @@ const handleGenerate = async () => {
   if (!cfg.apiServer) throw new Error("请先在设置里选择模型服务器");
 
   const sel = await props.api.getCurrentSelectionRgba?.();
-  if (!sel) return;
+  if (!sel) {
+    MessagePlugin.warning("未获取到选区像素：请确认已打开文档并创建选区");
+    return;
+  }
 
   const blob = await rgbaToPngBlob(sel as any);
 

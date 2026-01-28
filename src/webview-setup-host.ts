@@ -162,7 +162,6 @@ export const webviewInitHost = (params: {
         Comlink.expose(
           backendAPI,
           endpoint,
-          [origin], // doesn't work in prod
         );
         if (apis.length === pages.length) {
           console.log("webviewInitHost resolved");

@@ -5,7 +5,7 @@ const extraPrefs = {
   hotReloadPort: 8080,
   webviewUi: true,
   webviewReloadPort: 8082,
-  copyZipAssets: ["public-zip/*"],
+  copyZipAssets: ["public-zip/*", "public/webview-ui/**"],
   uniqueIds: true,
 };
 
