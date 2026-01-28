@@ -23,13 +23,22 @@ export const placeImageUrlToSelectionAndMask = async (params: {
     const doc = photoshop.app.activeDocument;
     if (!doc) throw new Error("No active document");
     const selBounds = doc.selection?.bounds;
-    if (!selBounds) throw new Error("No selection");
+    const hadSelection = !!selBounds;
+
+    const docW = toPx((doc as any).width);
+    const docH = toPx((doc as any).height);
+    const effectiveBounds = selBounds || {
+      left: 0,
+      top: 0,
+      right: docW,
+      bottom: docH,
+    };
 
     // Save selection bounds as numbers (no channel creation to avoid PS dialogs)
-    const selLeft = typeof (selBounds as any).left === "number" ? (selBounds as any).left : Number((selBounds as any).left?.value ?? (selBounds as any).left);
-    const selTop = typeof (selBounds as any).top === "number" ? (selBounds as any).top : Number((selBounds as any).top?.value ?? (selBounds as any).top);
-    const selRight = typeof (selBounds as any).right === "number" ? (selBounds as any).right : Number((selBounds as any).right?.value ?? (selBounds as any).right);
-    const selBottom = typeof (selBounds as any).bottom === "number" ? (selBounds as any).bottom : Number((selBounds as any).bottom?.value ?? (selBounds as any).bottom);
+    const selLeft = typeof (effectiveBounds as any).left === "number" ? (effectiveBounds as any).left : Number((effectiveBounds as any).left?.value ?? (effectiveBounds as any).left);
+    const selTop = typeof (effectiveBounds as any).top === "number" ? (effectiveBounds as any).top : Number((effectiveBounds as any).top?.value ?? (effectiveBounds as any).top);
+    const selRight = typeof (effectiveBounds as any).right === "number" ? (effectiveBounds as any).right : Number((effectiveBounds as any).right?.value ?? (effectiveBounds as any).right);
+    const selBottom = typeof (effectiveBounds as any).bottom === "number" ? (effectiveBounds as any).bottom : Number((effectiveBounds as any).bottom?.value ?? (effectiveBounds as any).bottom);
     const selW = Math.max(1, selRight - selLeft);
     const selH = Math.max(1, selBottom - selTop);
 
@@ -119,7 +128,7 @@ export const placeImageUrlToSelectionAndMask = async (params: {
     );
 
     // Create layer mask from selection
-    return await photoshop.action.batchPlay(
+    const maskResult = await photoshop.action.batchPlay(
       [
         {
           _obj: "make",
@@ -131,6 +140,23 @@ export const placeImageUrlToSelectionAndMask = async (params: {
       ],
       {},
     );
+
+    // 如果原本没有选区，这里清掉选区，避免改变用户的选区状态
+    if (!hadSelection) {
+      await photoshop.action.batchPlay(
+        [
+          {
+            _obj: "set",
+            _target: [{ _ref: "channel", _property: "selection" }],
+            to: { _enum: "ordinal", _value: "none" },
+            _options: { dialogOptions: "dontDisplay" },
+          },
+        ],
+        {},
+      );
+    }
+
+    return maskResult;
   }, { commandName: "Place Image URL To Selection And Mask" });
 };
 
@@ -216,15 +242,17 @@ export const getCurrentSelectionRgba = async (params?: { applyGamma?: boolean })
         if (!doc) return null;
 
         const selBounds = doc.selection?.bounds;
-        if (!selBounds) return null;
+        const hasSelection = !!selBounds;
 
-        const left = toPx(selBounds.left);
-        const top = toPx(selBounds.top);
-        const right = toPx(selBounds.right);
-        const bottom = toPx(selBounds.bottom);
+        const left = hasSelection ? toPx((selBounds as any).left) : 0;
+        const top = hasSelection ? toPx((selBounds as any).top) : 0;
+        const right = hasSelection ? toPx((selBounds as any).right) : toPx((doc as any).width);
+        const bottom = hasSelection ? toPx((selBounds as any).bottom) : toPx((doc as any).height);
 
         const width = Math.max(1, Math.round(right - left));
         const height = Math.max(1, Math.round(bottom - top));
+
+        const { targetSize, outW, outH } = computeTargetSize(width, height);
 
         const sourceBounds = { left, top, right, bottom, width, height };
 
@@ -232,6 +260,7 @@ export const getCurrentSelectionRgba = async (params?: { applyGamma?: boolean })
         const pixelsResult = await photoshop.imaging.getPixels({
             documentID: doc.id,
             sourceBounds,
+            ...(targetSize ? { targetSize } : {}),
             colorSpace: "RGB",
             applyAlpha: false,
             hasAlpha: true,
@@ -241,7 +270,7 @@ export const getCurrentSelectionRgba = async (params?: { applyGamma?: boolean })
         const rgbRaw = await rgbImageData.getData({} as any);
         rgbImageData.dispose();
 
-        const totalPixels = width * height;
+        const totalPixels = outW * outH;
         const rawLen = (rgbRaw as any)?.length ?? 0;
         const comps = rawLen / totalPixels;
         if (comps !== 3 && comps !== 4) {
@@ -259,24 +288,31 @@ export const getCurrentSelectionRgba = async (params?: { applyGamma?: boolean })
             }
         }
 
-        // 2) 取选区 mask（1 通道，0-255）
-        const selResult = await photoshop.imaging.getSelection({
-            documentID: doc.id,
-            sourceBounds,
-        } as any);
-        const selImageData = selResult.imageData;
-        const maskRaw = await selImageData.getData({} as any);
-        selImageData.dispose();
-
-        const maskU8 = normalizeToUint8(maskRaw, totalPixels, "mask");
+        const maskU8 = hasSelection
+          ? await (async () => {
+              const selResult = await photoshop.imaging.getSelection({
+                documentID: doc.id,
+                sourceBounds,
+                ...(targetSize ? { targetSize } : {}),
+              } as any);
+              const selImageData = selResult.imageData;
+              const maskRaw = await selImageData.getData({} as any);
+              selImageData.dispose();
+              return normalizeToUint8(maskRaw, totalPixels, "mask");
+            })()
+          : (() => {
+              const m = new Uint8Array(totalPixels);
+              m.fill(255);
+              return m;
+            })();
 
         const mmRgb = minMaxU8(rgbU8);
         const mmMask = minMaxU8(maskU8);
         console.log("selection rgba debug", { width, height, comps, applyGamma, rgb: mmRgb, mask: mmMask });
 
         // 3) 合成 RGBA（mask 当 alpha）
-        const rgba = new Uint8Array(width * height * 4);
-        for (let i = 0; i < width * height; i++) {
+        const rgba = new Uint8Array(outW * outH * 4);
+        for (let i = 0; i < outW * outH; i++) {
             const r = rgbU8[i * comps + 0];
             const g = rgbU8[i * comps + 1];
             const b = rgbU8[i * comps + 2];
@@ -290,8 +326,8 @@ export const getCurrentSelectionRgba = async (params?: { applyGamma?: boolean })
         }
 
         return {
-            width,
-            height,
+            width: outW,
+            height: outH,
             // UXP + Comlink 对 ArrayBuffer/TypedArray 的跨域传输有时会变成 0 长度，
             // 这里改成可序列化的 number[]，由 webview 侧再还原成 Uint8ClampedArray。
             rgba: Array.from(rgba),
@@ -357,6 +393,47 @@ const base64ToU8 = (b64: string): Uint8Array => {
   return out;
 };
 
+const MAX_AUTO_DOWNSAMPLE_DIM = 4096;
+
+const computeTargetSize = (width: number, height: number) => {
+  const maxDim = Math.max(width, height);
+  if (maxDim <= MAX_AUTO_DOWNSAMPLE_DIM) {
+    return { targetSize: undefined as any, outW: width, outH: height };
+  }
+  if (width >= height) {
+    const outW = MAX_AUTO_DOWNSAMPLE_DIM;
+    const outH = Math.max(1, Math.round((height * outW) / width));
+    return { targetSize: { width: outW }, outW, outH };
+  }
+  const outH = MAX_AUTO_DOWNSAMPLE_DIM;
+  const outW = Math.max(1, Math.round((width * outH) / height));
+  return { targetSize: { height: outH }, outW, outH };
+};
+
+const encodeRgbToJpegBlob = async (params: { rgb: Uint8Array; width: number; height: number }): Promise<Blob> => {
+  const { rgb, width, height } = params;
+  const imaging: any = (photoshop as any).imaging;
+  if (!imaging?.createImageDataFromBuffer || !imaging?.encodeImageData) {
+    throw new Error("Photoshop imaging.encodeImageData 不可用");
+  }
+
+  const imgData = await imaging.createImageDataFromBuffer(rgb, {
+    width,
+    height,
+    components: 3,
+    chunky: true,
+    colorSpace: "RGB",
+    colorProfile: "sRGB IEC61966-2.1",
+  });
+
+  const jpegBase64 = await imaging.encodeImageData({ imageData: imgData, base64: true });
+  if (typeof jpegBase64 !== "string" || !jpegBase64) throw new Error("encodeImageData 返回无效数据");
+
+  const bytes = base64ToU8(jpegBase64);
+  if (!bytes.length) throw new Error("JPEG 编码结果为空");
+  return new Blob([bytes], { type: "image/jpeg" });
+};
+
 const rgbaToRgbU8 = (rgba: Uint8Array): Uint8Array => {
   const total = Math.floor(rgba.length / 4);
   const rgb = new Uint8Array(total * 3);
@@ -376,28 +453,8 @@ const rgbaToRgbU8 = (rgba: Uint8Array): Uint8Array => {
 
 const rgbaToJpegBlob = async (params: { rgba: Uint8Array; width: number; height: number }): Promise<Blob> => {
   const { rgba, width, height } = params;
-  const imaging: any = (photoshop as any).imaging;
-  if (!imaging?.createImageDataFromBuffer || !imaging?.encodeImageData) {
-    throw new Error("Photoshop imaging.encodeImageData 不可用");
-  }
-
   const rgb = rgbaToRgbU8(rgba);
-
-  const imgData = await imaging.createImageDataFromBuffer(rgb, {
-    width,
-    height,
-    components: 3,
-    chunky: true,
-    colorSpace: "RGB",
-    colorProfile: "sRGB IEC61966-2.1",
-  });
-
-  const jpegBase64 = await imaging.encodeImageData({ imageData: imgData, base64: true });
-  if (typeof jpegBase64 !== "string" || !jpegBase64) throw new Error("encodeImageData 返回无效数据");
-
-  const bytes = base64ToU8(jpegBase64);
-  if (!bytes.length) throw new Error("JPEG 编码结果为空");
-  return new Blob([bytes], { type: "image/jpeg" });
+  return await encodeRgbToJpegBlob({ rgb, width, height });
 };
 
 export const getCurrentSelectionPngUrl = async (params?: { applyGamma?: boolean; forceOpaque?: boolean }) => {
@@ -406,20 +463,22 @@ export const getCurrentSelectionPngUrl = async (params?: { applyGamma?: boolean;
     if (!doc) return null;
 
     const selBounds = doc.selection?.bounds;
-    if (!selBounds) return null;
+    const hasSelection = !!selBounds;
 
-    const left = toPx(selBounds.left);
-    const top = toPx(selBounds.top);
-    const right = toPx(selBounds.right);
-    const bottom = toPx(selBounds.bottom);
+    const left = hasSelection ? toPx((selBounds as any).left) : 0;
+    const top = hasSelection ? toPx((selBounds as any).top) : 0;
+    const right = hasSelection ? toPx((selBounds as any).right) : toPx((doc as any).width);
+    const bottom = hasSelection ? toPx((selBounds as any).bottom) : toPx((doc as any).height);
 
     const width = Math.max(1, Math.round(right - left));
     const height = Math.max(1, Math.round(bottom - top));
+    const { targetSize, outW, outH } = computeTargetSize(width, height);
     const sourceBounds = { left, top, right, bottom, width, height };
 
     const pixelsResult = await photoshop.imaging.getPixels({
       documentID: doc.id,
       sourceBounds,
+      ...(targetSize ? { targetSize } : {}),
       colorSpace: "RGB",
       applyAlpha: false,
       hasAlpha: true,
@@ -429,7 +488,7 @@ export const getCurrentSelectionPngUrl = async (params?: { applyGamma?: boolean;
     const rgbRaw = await rgbImageData.getData({} as any);
     rgbImageData.dispose();
 
-    const totalPixels = width * height;
+    const totalPixels = outW * outH;
     const rawLen = (rgbRaw as any)?.length ?? 0;
     const comps = rawLen / totalPixels;
     if (comps !== 3 && comps !== 4) {
@@ -446,36 +505,44 @@ export const getCurrentSelectionPngUrl = async (params?: { applyGamma?: boolean;
       }
     }
 
-    const selResult = await photoshop.imaging.getSelection({
-      documentID: doc.id,
-      sourceBounds,
-    } as any);
-    const selImageData = selResult.imageData;
-    const maskRaw = await selImageData.getData({} as any);
-    selImageData.dispose();
+    const maskU8 = hasSelection
+      ? await (async () => {
+          const selResult = await photoshop.imaging.getSelection({
+            documentID: doc.id,
+            sourceBounds,
+            ...(targetSize ? { targetSize } : {}),
+          } as any);
+          const selImageData = selResult.imageData;
+          const maskRaw = await selImageData.getData({} as any);
+          selImageData.dispose();
+          return normalizeToUint8(maskRaw, totalPixels, "mask");
+        })()
+      : (() => {
+          const m = new Uint8Array(totalPixels);
+          m.fill(255);
+          return m;
+        })();
 
-    const maskU8 = normalizeToUint8(maskRaw, totalPixels, "mask");
-
-    const rgba = new Uint8Array(width * height * 4);
-    for (let i = 0; i < width * height; i++) {
+    // 直接生成最终要编码的 RGB（白底合成），避免 RGBA/RGB 多份中间 buffer。
+    const rgb = new Uint8Array(totalPixels * 3);
+    const bg = 255;
+    const forceOpaque = params?.forceOpaque === true;
+    for (let i = 0; i < totalPixels; i++) {
       const r = rgbU8[i * comps + 0];
       const g = rgbU8[i * comps + 1];
       const b = rgbU8[i * comps + 2];
       const a0 = comps === 4 ? rgbU8[i * comps + 3] : 255;
-      const a = Math.round((a0 * maskU8[i]) / 255);
-      rgba[i * 4 + 0] = r;
-      rgba[i * 4 + 1] = g;
-      rgba[i * 4 + 2] = b;
-      rgba[i * 4 + 3] = a;
+      const aSel = hasSelection ? maskU8[i] : 255;
+      const a = forceOpaque ? 255 : Math.round((a0 * aSel) / 255);
+
+      rgb[i * 3 + 0] = Math.max(0, Math.min(255, Math.round((r * a + bg * (255 - a)) / 255)));
+      rgb[i * 3 + 1] = Math.max(0, Math.min(255, Math.round((g * a + bg * (255 - a)) / 255)));
+      rgb[i * 3 + 2] = Math.max(0, Math.min(255, Math.round((b * a + bg * (255 - a)) / 255)));
     }
 
-    if (params?.forceOpaque === true) {
-      for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
-    }
-
-    const blob = await rgbaToJpegBlob({ rgba, width, height });
+    const blob = await encodeRgbToJpegBlob({ rgb, width: outW, height: outH });
     const url = await uploadBlobToGrsai(blob, "jpg");
-    return { width, height, url };
+    return { width: outW, height: outH, url };
   }, { commandName: "Upload Selection PNG" });
 };
 
