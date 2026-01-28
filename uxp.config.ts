@@ -17,11 +17,11 @@ const manifest: UXP_Manifest = {
   name,
   version,
   main: "index.html",
-  manifestVersion: 6,
+  manifestVersion: 5,
   host: [
     {
       app: "PS",
-      minVersion: "24.2.0",
+      minVersion: "25.0.0",
     },
               ],
   entrypoints: [
@@ -108,6 +108,7 @@ const manifest: UXP_Manifest = {
     },
     network: {
       domains: [
+        "all",
         "https://hyperbrew.co",
         "https://github.com",
         "https://vitejs.dev",
