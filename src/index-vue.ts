@@ -1,5 +1,6 @@
 import { createApp } from "vue";
 import App from "./main.vue";
+import { getGlobalConfig } from "./api/uxp";
 import "./app.css";
 import "./index.scss";
 
@@ -109,10 +110,17 @@ const installOnScreenDebug = (label: string) => {
 };
 
 if (import.meta.env.VITE_BOLT_MODE !== "dev") {
+  const boot = async () => {
+    try {
+      const cfg = await getGlobalConfig();
+      if (cfg.debugPanelEnabled) installOnScreenDebug("host");
+    } catch {
+    }
+  };
   if (document.readyState === "loading") {
-    window.addEventListener("DOMContentLoaded", () => installOnScreenDebug("host"));
+    window.addEventListener("DOMContentLoaded", boot);
   } else {
-    installOnScreenDebug("host");
+    boot();
   }
 }
 

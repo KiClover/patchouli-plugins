@@ -4,6 +4,7 @@ import { MessagePlugin, NotifyPlugin } from "tdesign-vue-next";
 
 import type { API } from "../../../src/api/api";
 import { setSecretKey } from "../api/req";
+import { installOnScreenDebug, uninstallOnScreenDebug } from "../debug-panel";
 
 const currentVersion = "0.1.1"
 
@@ -11,6 +12,7 @@ const props = defineProps<{ api: API }>();
 
 const apiKey = ref<string>("");
 const apiServer = ref<string>("");
+const debugPanelEnabled = ref(false);
 
 const apiServerOptions = [
   { label: "PatchouliProxy", value: "official", disabled: true },
@@ -87,6 +89,7 @@ const loadConfig = async () => {
   const cfg = await props.api.getGlobalConfig();
   apiKey.value = cfg.apiKey || "";
   apiServer.value = cfg.apiServer || apiServerOptions[1].value;
+  debugPanelEnabled.value = !!cfg.debugPanelEnabled;
   setSecretKey(apiKey.value || undefined);
 };
 
@@ -98,6 +101,13 @@ const saveKey = async () => {
 const commitServer = async () => {
   await props.api.setApiServer(apiServer.value);
   await props.api.postServerChanged(apiServer.value);
+};
+
+const commitDebugPanel = async (val: boolean) => {
+  debugPanelEnabled.value = !!val;
+  await props.api.setDebugPanelEnabled(debugPanelEnabled.value);
+  if (debugPanelEnabled.value) installOnScreenDebug("webview");
+  else uninstallOnScreenDebug("webview");
 };
 
 onMounted(() => {
@@ -139,6 +149,9 @@ const joinGroup = async () => {
       <t-form-item label="群组">
         <t-input readonly placeholder="930167129" />
         <t-button theme="primary" @click="joinGroup">加入群组</t-button>
+      </t-form-item>
+      <t-form-item label="Debug面板">
+        <t-switch :value="debugPanelEnabled" @change="commitDebugPanel" />
       </t-form-item>
     </t-form>
 

@@ -28,6 +28,7 @@ export const openURL = async (url: string) => {
 type GlobalConfig = {
   apiKey?: string;
   apiServer?: string;
+  debugPanelEnabled?: boolean;
 };
 
 const CONFIG_FILE_NAME = "virtualai.config.json";
@@ -74,6 +75,13 @@ export const setApiKey = async (apiKey: string) => {
 export const setApiServer = async (apiServer: string) => {
   const cfg = await readConfig();
   cfg.apiServer = apiServer;
+  await writeConfig(cfg);
+  return true;
+};
+
+export const setDebugPanelEnabled = async (enabled: boolean) => {
+  const cfg = await readConfig();
+  cfg.debugPanelEnabled = !!enabled;
   await writeConfig(cfg);
   return true;
 };

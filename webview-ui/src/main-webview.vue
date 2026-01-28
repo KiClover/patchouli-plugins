@@ -4,6 +4,7 @@ import { ref } from "vue";
 import * as webviewAPI from "./webview-api";
 import { initWebview } from "./webview-setup";
 import { setSecretKey } from "./api/req";
+import { installOnScreenDebug } from "./debug-panel";
 const { api, page } = initWebview(webviewAPI);
 
 const secretReady = ref(false);
@@ -26,6 +27,7 @@ const withTimeout = async <T>(p: Promise<T>, ms: number): Promise<T> => {
     try {
       const cfg = await withTimeout(api.getGlobalConfig(), 800);
       apiKey = cfg.apiKey || undefined;
+      if (cfg.debugPanelEnabled) installOnScreenDebug("webview");
       setSecretKey(apiKey);
       secretReady.value = true;
       break;

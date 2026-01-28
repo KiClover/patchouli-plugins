@@ -9,8 +9,8 @@ const extraPrefs = {
   uniqueIds: true,
 };
 
-export const id = "com.patchouli.uxp";
-const name = "帕秋莉";
+export const id = "com.kiclover.patchouli";
+const name = "帕秋莉-PatchouliPanel";
 
 const manifest: UXP_Manifest = {
   id,
