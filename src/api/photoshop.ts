@@ -5,6 +5,30 @@ export const notify = async (message: string) => {
   await photoshop.app.showAlert(message);
 };
 
+const ensureSelectionBounds = (doc: any) => {
+  const selBounds = doc.selection?.bounds;
+  const hadSelection = !!selBounds;
+
+  const docW = toPx((doc as any).width);
+  const docH = toPx((doc as any).height);
+  const effectiveBounds = selBounds || {
+    left: 0,
+    top: 0,
+    right: docW,
+    bottom: docH,
+  };
+
+  const selLeft = typeof (effectiveBounds as any).left === "number" ? (effectiveBounds as any).left : Number((effectiveBounds as any).left?.value ?? (effectiveBounds as any).left);
+  const selTop = typeof (effectiveBounds as any).top === "number" ? (effectiveBounds as any).top : Number((effectiveBounds as any).top?.value ?? (effectiveBounds as any).top);
+  const selRight = typeof (effectiveBounds as any).right === "number" ? (effectiveBounds as any).right : Number((effectiveBounds as any).right?.value ?? (effectiveBounds as any).right);
+  const selBottom = typeof (effectiveBounds as any).bottom === "number" ? (effectiveBounds as any).bottom : Number((effectiveBounds as any).bottom?.value ?? (effectiveBounds as any).bottom);
+
+  const selW = Math.max(1, selRight - selLeft);
+  const selH = Math.max(1, selBottom - selTop);
+
+  return { hadSelection, selLeft, selTop, selRight, selBottom, selW, selH };
+};
+
 const urlFileName = (url: string) => {
   try {
     const u = new URL(url);
@@ -22,25 +46,7 @@ export const placeImageUrlToSelectionAndMask = async (params: {
   return await photoshop.core.executeAsModal(async () => {
     const doc = photoshop.app.activeDocument;
     if (!doc) throw new Error("No active document");
-    const selBounds = doc.selection?.bounds;
-    const hadSelection = !!selBounds;
-
-    const docW = toPx((doc as any).width);
-    const docH = toPx((doc as any).height);
-    const effectiveBounds = selBounds || {
-      left: 0,
-      top: 0,
-      right: docW,
-      bottom: docH,
-    };
-
-    // Save selection bounds as numbers (no channel creation to avoid PS dialogs)
-    const selLeft = typeof (effectiveBounds as any).left === "number" ? (effectiveBounds as any).left : Number((effectiveBounds as any).left?.value ?? (effectiveBounds as any).left);
-    const selTop = typeof (effectiveBounds as any).top === "number" ? (effectiveBounds as any).top : Number((effectiveBounds as any).top?.value ?? (effectiveBounds as any).top);
-    const selRight = typeof (effectiveBounds as any).right === "number" ? (effectiveBounds as any).right : Number((effectiveBounds as any).right?.value ?? (effectiveBounds as any).right);
-    const selBottom = typeof (effectiveBounds as any).bottom === "number" ? (effectiveBounds as any).bottom : Number((effectiveBounds as any).bottom?.value ?? (effectiveBounds as any).bottom);
-    const selW = Math.max(1, selRight - selLeft);
-    const selH = Math.max(1, selBottom - selTop);
+    const { hadSelection, selLeft, selTop, selRight, selBottom, selW, selH } = ensureSelectionBounds(doc);
 
     // Download image
     const res = await fetch(params.url);
@@ -158,6 +164,178 @@ export const placeImageUrlToSelectionAndMask = async (params: {
 
     return maskResult;
   }, { commandName: "Place Image URL To Selection And Mask" });
+};
+
+export const placeImageUrlsToPatchouliResGroup = async (params: { urls: string[]; groupName?: string }) => {
+  return await photoshop.core.executeAsModal(async () => {
+    const doc = photoshop.app.activeDocument;
+    if (!doc) throw new Error("No active document");
+
+    const urls = (params.urls || []).map((x) => String(x || "").trim()).filter(Boolean);
+    if (urls.length === 0) throw new Error("urls 为空");
+    if (urls.length > 9) throw new Error("最多支持 9 张");
+
+    const groupName = (params.groupName || "patchouli-res").trim() || "patchouli-res";
+    const { hadSelection, selLeft, selTop, selRight, selBottom, selW, selH } = ensureSelectionBounds(doc);
+
+    // 1) 获取/创建组
+    let group: any = null;
+    try {
+      group = (doc as any).layers?.getByName?.(groupName) || null;
+    } catch {
+      group = null;
+    }
+
+    const isGroup = (g: any) => {
+      try {
+        return !!g && (g as any).isGroupLayer === true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (!isGroup(group)) {
+      group = await (doc as any).createLayerGroup({ name: groupName });
+    }
+
+    // 2) 逐张 place，并移动到组内且缩放到选区大小
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+
+      const res = await fetch(url);
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        throw new Error(`Download image failed: ${res.status}${t ? ` - ${t}` : ""}`);
+      }
+      const buf = await res.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+
+      const tempFolder = await uxp.storage.localFileSystem.getTemporaryFolder();
+      const name = `patchouli-res-${i + 1}.${urlFileName(url).split(".").pop() || "png"}`;
+      const file = await tempFolder.createFile(name, { overwrite: true });
+      await file.write(bytes, { format: uxp.storage.formats.binary } as any);
+      const token = uxp.storage.localFileSystem.createSessionToken(file);
+
+      await photoshop.action.batchPlay(
+        [
+          {
+            _obj: "placeEvent",
+            null: {
+              _path: token,
+              _kind: "local",
+            },
+            _options: { dialogOptions: "dontDisplay" },
+          },
+        ],
+        {},
+      );
+
+      const layer = doc.activeLayers?.[0];
+      if (!layer) throw new Error("No active layer after placing image");
+
+      // Move into group
+      (layer as any).move(group, photoshop.constants.ElementPlacement.PLACEINSIDE);
+
+      // Transform to match selection (top-left anchored)
+      const b0: any = (layer as any).bounds;
+      const l0 = typeof b0?.left === "number" ? b0.left : Number(b0?.left?.value ?? b0?.left);
+      const t0 = typeof b0?.top === "number" ? b0.top : Number(b0?.top?.value ?? b0?.top);
+      const r0 = typeof b0?.right === "number" ? b0.right : Number(b0?.right?.value ?? b0?.right);
+      const btm0 = typeof b0?.bottom === "number" ? b0.bottom : Number(b0?.bottom?.value ?? b0?.bottom);
+      const w0 = Math.max(1, r0 - l0);
+      const h0 = Math.max(1, btm0 - t0);
+
+      await (layer as any).translate(selLeft - l0, selTop - t0);
+      const sx = (selW / w0) * 100;
+      const sy = (selH / h0) * 100;
+      await (layer as any).scale(sx, sy, photoshop.constants.AnchorPosition.TOPLEFT);
+    }
+
+    // 3) placeEvent/变换过程中可能会清空/改变选区；这里在建蒙版前强制恢复矩形选区
+    await photoshop.action.batchPlay(
+      [
+        {
+          _obj: "set",
+          _target: [{ _ref: "channel", _property: "selection" }],
+          to: {
+            _obj: "rectangle",
+            top: { _unit: "pixelsUnit", _value: selTop },
+            left: { _unit: "pixelsUnit", _value: selLeft },
+            bottom: { _unit: "pixelsUnit", _value: selBottom },
+            right: { _unit: "pixelsUnit", _value: selRight },
+          },
+          _options: { dialogOptions: "dontDisplay" },
+        },
+      ],
+      {},
+    );
+
+    // 4) 在组上创建蒙版（一次即可）
+    await photoshop.action.batchPlay(
+      [
+        {
+          _obj: "select",
+          _target: [{ _ref: "layer", _id: (group as any).id }],
+          makeVisible: false,
+          _options: { dialogOptions: "dontDisplay" },
+        },
+      ],
+      {},
+    );
+
+    const makeGroupMask = async () => {
+      await photoshop.action.batchPlay(
+        [
+          {
+            _obj: "make",
+            new: { _class: "channel" },
+            at: { _ref: "channel", _enum: "channel", _value: "mask" },
+            using: { _enum: "userMaskEnabled", _value: "revealSelection" },
+            _options: { dialogOptions: "dontDisplay" },
+          },
+        ],
+        {},
+      );
+    };
+
+    try {
+      await makeGroupMask();
+    } catch (e) {
+      // 兼容：如果组已有蒙版或状态不满足，先尝试删除已有蒙版再重试一次
+      try {
+        await photoshop.action.batchPlay(
+          [
+            {
+              _obj: "delete",
+              _target: [{ _ref: "channel", _enum: "channel", _value: "mask" }],
+              _options: { dialogOptions: "dontDisplay" },
+            },
+          ],
+          {},
+        );
+      } catch {
+        // ignore
+      }
+      await makeGroupMask();
+    }
+
+    // 如果原本没有选区，这里清掉选区，避免改变用户的选区状态
+    if (!hadSelection) {
+      await photoshop.action.batchPlay(
+        [
+          {
+            _obj: "set",
+            _target: [{ _ref: "channel", _property: "selection" }],
+            to: { _enum: "ordinal", _value: "none" },
+            _options: { dialogOptions: "dontDisplay" },
+          },
+        ],
+        {},
+      );
+    }
+
+    return true;
+  }, { commandName: "Place Images To Patchouli Res Group" });
 };
 
 

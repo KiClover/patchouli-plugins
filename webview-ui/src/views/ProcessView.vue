@@ -33,6 +33,7 @@ type ProcessState = {
   selectedRatio?: string;
   selectedResolution?: string;
   outputForceOpaque?: boolean;
+  parallelCount?: number;
 };
 
 const saveUpdate = async () => {
@@ -147,6 +148,7 @@ const saveProcessState = () => {
     selectedRatio: selectedRatio.value,
     selectedResolution: selectedResolution.value,
     outputForceOpaque: outputForceOpaque.value,
+    parallelCount: parallelCount.value,
   };
   try {
     localStorage.setItem(PROCESS_STATE_KEY, JSON.stringify(state));
@@ -183,6 +185,7 @@ const moreOptions = [
 const useCustomRatio = ref(false);
 const selectedRatio = ref<string>(ratioOptions[0].value);
 const selectedResolution = ref<string>(resolutionOptions[1].value);
+const parallelCount = ref<number>(1);
 
 const maxUpload = 5;
 const uploadFiles = ref<any[]>([]);
@@ -198,6 +201,110 @@ const genProgress = ref(0);
 const genStatus = ref<string>("");
 const genError = ref<string>("");
 const genResultUrl = ref<string>("");
+const genResultUrls = ref<string[]>([]);
+
+type Settled<T> =
+  | { status: "fulfilled"; value: T }
+  | { status: "rejected"; reason: unknown };
+
+const runWithConcurrency = async <T>(tasks: Array<() => Promise<T>>, limit: number): Promise<Array<Settled<T>>> => {
+  const n = Math.max(1, Math.min(9, Math.floor(limit || 1)));
+  const results: Array<Settled<T>> = new Array(tasks.length);
+  let next = 0;
+
+  const worker = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= tasks.length) return;
+      try {
+        const v = await tasks[i]();
+        results[i] = { status: "fulfilled", value: v };
+      } catch (e) {
+        results[i] = { status: "rejected", reason: e };
+      }
+    }
+  };
+
+  const workers = new Array(Math.min(n, tasks.length)).fill(0).map(() => worker());
+  await Promise.all(workers);
+  return results;
+};
+
+const generateOneGrsai = async (params: {
+  providerKey: string;
+  body: any;
+  index: number;
+  progressList: number[];
+  onProgress: () => void;
+}): Promise<string> => {
+  const { providerKey, body, index, progressList, onProgress } = params;
+  const res = await fetch("https://grsai.dakka.com.cn/v1/draw/nano-banana", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${providerKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`请求失败: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`);
+  }
+  if (!res.body) throw new Error("响应不支持 stream");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let resultUrl = "";
+  let status = "running";
+  let errMsg = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = events.pop() || "";
+
+    for (const eventText of events) {
+      const objs = parseSseDataEvents(eventText);
+      for (const obj of objs) {
+        if (typeof obj?.progress === "number") {
+          progressList[index] = obj.progress;
+          onProgress();
+        }
+        if (typeof obj?.status === "string") status = obj.status;
+        const firstUrl = obj?.results?.[0]?.url;
+        if (typeof firstUrl === "string") resultUrl = firstUrl;
+        const err = obj?.error || obj?.failure_reason;
+        if (typeof err === "string" && err) errMsg = err;
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    const objs = parseSseDataEvents(buffer);
+    for (const obj of objs) {
+      if (typeof obj?.progress === "number") {
+        progressList[index] = obj.progress;
+        onProgress();
+      }
+      if (typeof obj?.status === "string") status = obj.status;
+      const firstUrl = obj?.results?.[0]?.url;
+      if (typeof firstUrl === "string") resultUrl = firstUrl;
+      const err = obj?.error || obj?.failure_reason;
+      if (typeof err === "string" && err) errMsg = err;
+    }
+  }
+
+  if (status === "failed") throw new Error(errMsg || "生成失败");
+  if (!resultUrl) throw new Error("生成成功但未返回结果 URL");
+  progressList[index] = 100;
+  onProgress();
+  return resultUrl;
+};
 
 const loadPresets = async () => {
   try {
@@ -228,7 +335,7 @@ watch(selectedPreset, (id) => {
 });
 
 watch(
-  [selectedModel, selectedPreset, prompt, useCustomRatio, selectedRatio, selectedResolution, outputForceOpaque],
+  [selectedModel, selectedPreset, prompt, useCustomRatio, selectedRatio, selectedResolution, outputForceOpaque, parallelCount],
   () => {
     saveProcessState();
   },
@@ -268,6 +375,10 @@ onMounted(async () => {
       selectedResolution.value = restored.selectedResolution;
     }
     if (typeof restored.outputForceOpaque === "boolean") outputForceOpaque.value = restored.outputForceOpaque;
+    if (typeof restored.parallelCount === "number") {
+      const n = Math.max(1, Math.min(9, Math.floor(restored.parallelCount)));
+      parallelCount.value = n;
+    }
   }
 
   await loadPresets();
@@ -514,6 +625,7 @@ const handleGenerate = async () => {
   genStatus.value = "running";
   genError.value = "";
   genResultUrl.value = "";
+  genResultUrls.value = [];
   MessagePlugin.info("开始生成...");
 
   try {
@@ -533,7 +645,7 @@ const handleGenerate = async () => {
     const refUrls = await getUploadFileUrlsForGrsai(providerKey);
     const urls = [selectionUrl, ...refUrls];
 
-    const body = {
+    const baseBody = {
       model: selectedModel.value,
       prompt: prompt.value,
       aspectRatio: useCustomRatio.value ? selectedRatio.value : "auto",
@@ -542,79 +654,53 @@ const handleGenerate = async () => {
       shutProgress: false,
     };
 
-    const res = await fetch("https://grsai.dakka.com.cn/v1/draw/nano-banana", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${providerKey}`,
-      },
-      body: JSON.stringify(body),
+    const n = Math.max(1, Math.min(9, Math.floor(parallelCount.value || 1)));
+    const progressList = new Array(n).fill(0);
+    const onProgress = () => {
+      const sum = progressList.reduce((a, b) => a + b, 0);
+      genProgress.value = Math.max(0, Math.min(100, Math.round(sum / n)));
+    };
+
+    const tasks = new Array(n).fill(0).map((_, i) => {
+      return async () => {
+        return await generateOneGrsai({
+          providerKey,
+          body: { ...baseBody },
+          index: i,
+          progressList,
+          onProgress,
+        });
+      };
     });
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`请求失败: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`);
-    }
-    if (!res.body) throw new Error("响应不支持 stream");
+    const settled = await runWithConcurrency(tasks, n);
+    const urlsOut = settled
+      .filter((x): x is { status: "fulfilled"; value: string } => x.status === "fulfilled")
+      .map((x) => x.value);
+    const fails = settled.filter((x) => x.status === "rejected");
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let buffer = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const events = buffer.split(/\r?\n\r?\n/);
-      buffer = events.pop() || "";
-
-      for (const eventText of events) {
-        const objs = parseSseDataEvents(eventText);
-        for (const obj of objs) {
-          if (typeof obj?.progress === "number") genProgress.value = obj.progress;
-          if (typeof obj?.status === "string") genStatus.value = obj.status;
-          const firstUrl = obj?.results?.[0]?.url;
-          if (typeof firstUrl === "string") genResultUrl.value = firstUrl;
-          const err = obj?.error || obj?.failure_reason;
-          if (typeof err === "string" && err) genError.value = err;
-        }
-      }
+    if (urlsOut.length === 0) {
+      const first = fails[0] as any;
+      const msg = first?.reason instanceof Error ? first.reason.message : String(first?.reason || "生成失败");
+      throw new Error(msg || "生成失败");
     }
 
-    if (buffer.trim()) {
-      const objs = parseSseDataEvents(buffer);
-      for (const obj of objs) {
-        if (typeof obj?.progress === "number") genProgress.value = obj.progress;
-        if (typeof obj?.status === "string") genStatus.value = obj.status;
-        const firstUrl = obj?.results?.[0]?.url;
-        if (typeof firstUrl === "string") genResultUrl.value = firstUrl;
-        const err = obj?.error || obj?.failure_reason;
-        if (typeof err === "string" && err) genError.value = err;
-      }
+    genResultUrls.value = urlsOut;
+    genResultUrl.value = urlsOut[0] || "";
+    genStatus.value = "succeeded";
+    if (fails.length) {
+      MessagePlugin.warning(`部分生成失败：成功 ${urlsOut.length} 张，失败 ${fails.length} 张`);
+    } else {
+      MessagePlugin.success(`生成完成（${urlsOut.length} 张）`);
     }
 
-    if (genStatus.value === "failed") {
-      throw new Error(genError.value || "生成失败");
+    const fn = (props.api as any).placeImageUrlsToPatchouliResGroup;
+    if (typeof fn !== "function") {
+      throw new Error("当前宿主未实现：将多张结果图写回 patchouli-res 并在组上添加蒙版");
     }
-
-    if (genStatus.value === "succeeded") {
-      MessagePlugin.success("生成完成");
-
-      if (genResultUrl.value) {
-        const fn = (props.api as any).placeImageUrlToSelectionAndMask;
-        console.log("placeImageUrlToSelectionAndMask typeof:", typeof fn);
-        if (typeof fn !== "function") {
-          throw new Error("当前宿主未实现：将结果图写回选区并添加蒙版");
-        }
-        MessagePlugin.info("正在回写到选区并添加蒙版...");
-        await fn({
-          url: genResultUrl.value,
-          fileName: "patchouli-res.png",
-        });
-        MessagePlugin.success("已回写到选区并添加蒙版");
-      }
-    }
+    MessagePlugin.info("正在回写到 patchouli-res 并添加组蒙版...");
+    await fn({ urls: urlsOut });
+    MessagePlugin.success("已回写到 patchouli-res 并添加组蒙版");
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     MessagePlugin.error(msg || "生成失败");
@@ -679,6 +765,10 @@ const handleGenerate = async () => {
 
       <t-form-item label="分辨率">
         <t-select v-model="selectedResolution" :options="resolutionOptions" />
+      </t-form-item>
+
+      <t-form-item label="并发数">
+        <t-input-number v-model="parallelCount" :min="1" :max="9" />
       </t-form-item>
       <!--
       <t-form-item label="移除透明通道">
