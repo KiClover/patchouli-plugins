@@ -171,7 +171,7 @@ const joinGroup = async () => {
       </t-form-item>
     </t-form>
 
-    <div class="settings-footer">Copyright @ 2026 <a href="#" @click.prevent="openUrl('https://patchouli.kiclover.com')">PatchouliPanel</a> & <a href="#" @click.prevent="openUrl('https://kiclover.com')">KiClover</a>. All Rights Reserved</div>
+    <div class="settings-footer">Copyright @ 2026 <a href="#" @click.prevent="openUrl('https://patchouli.kiclover.com')">PatchouliPanel</a> & <a href="#" @click.prevent="openUrl('https://kiclover.com')">佰分摆</a>. All Rights Reserved</div>
   </div>
 </template>
 

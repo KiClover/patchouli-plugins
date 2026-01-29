@@ -2,11 +2,6 @@
 import { ref } from "vue";
 import { uxp, indesign, photoshop, illustrator, premierepro } from "./globals";
 import { api } from "./api/api";
-import boltUxpLogo from "./assets/bolt-uxp.png";
-import viteLogo from "./assets/vite.png";
-import tsLogo from "./assets/typescript.png";
-import sassLogo from "./assets/sass.png";
-import vueLogo from "./assets/vue.png";
 
 const webviewUI = import.meta.env.VITE_BOLT_WEBVIEW_UI === "true";
 
@@ -36,18 +31,6 @@ const simpleAlert = () => {
 
 <template>
   <main v-if="!webviewUI">
-    <div>
-      <img class="logo-lg" :src="boltUxpLogo" alt="" />
-    </div>
-    <div class="stack-icons">
-      <img :src="viteLogo" class="logo" alt="" />
-      <span> + </span>
-      <img :src="vueLogo" class="logo" alt="" />
-      <span> + </span>
-      <img :src="tsLogo" class="logo" alt="" />
-      <span> + </span>
-      <img :src="sassLogo" class="logo" alt="" />
-    </div>
     <div class="button-group">
       <button @click="count++">count is {{ count }}</button>
       <button @click="simpleAlert">Alert</button>
@@ -69,11 +52,6 @@ const simpleAlert = () => {
       <p>
         Edit <span class="code">main.vue</span> and save to test HMR updates.
       </p>
-    </div>
-    <div class="button-group">
-      <a href="https://github.com/hyperbrew/bolt-uxp/">Bolt UXP Docs</a>
-      <a href="https://v3.vuejs.org/">Vue Docs</a>
-      <!-- <a href="https://vitejs.dev">Vite Docs</a> -->
     </div>
   </main>
 

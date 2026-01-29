@@ -105,6 +105,7 @@ const modelOptions = [
   { label: "NanoBanana", value: "nano-banana" },
   { label: "NanoBananaFast", value: "nano-banana-fast" },
   { label: "NanoBananaPro", value: "nano-banana-pro" },
+  { label:"NanoBananaPro-CL",value: "nano-banana-pro-cl" },
   { label: "NanoBananaPro-VT", value: "nano-banana-pro-vt" },
   { label: "NanoBananaPro-VIP", value: "nano-banana-pro-vip" },
   { label: "NanoBananaPro-4K-VIP", value: "nano-banana-pro-4k-vip" },
@@ -771,13 +772,13 @@ const handleGenerate = async () => {
       <t-form-item label="提示词">
         <t-textarea v-model="prompt"  :autosize="{ minRows: 3, maxRows: 5 }"/>
       </t-form-item>
-      <t-form-item label="操作">
+      <t-form-item label="预设操作">
         <t-row class="action-row" :gutter="12">
           <t-col :span="6">
-            <t-button theme="primary" block :loading="handleMoreClick('save')">保存</t-button>
+            <t-button theme="primary" block :loading="saving" @click="saveUpdate">保存</t-button>
           </t-col>
           <t-col :span="6">
-            <t-button theme="primary" block :loading="handleMoreClick('saveAs')">另存为</t-button>
+            <t-button theme="primary" block @click="openSaveAs">另存为</t-button>
           </t-col>
         </t-row>
       </t-form-item>
@@ -834,7 +835,7 @@ const handleGenerate = async () => {
         </div>
       </t-form-item>
 
-      <t-form-item v-if="showSelectionPreview && previewUrl" label="选区预览">
+      <t-form-item v-if="showSelectionPreview" label="选区预览">
           <t-image class="preview-img" :src="previewUrl" fit="contain" />
       </t-form-item>
     </t-form>
