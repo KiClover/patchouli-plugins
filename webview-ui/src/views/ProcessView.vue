@@ -139,8 +139,8 @@ const prompt = ref<string>("");
 
 const suppressPresetPromptSync = ref(false);
 
-const saveProcessState = () => {
-  const state: ProcessState = {
+const getCurrentProcessStateSnapshot = (): ProcessState => {
+  return {
     selectedModel: selectedModel.value,
     selectedPreset: selectedPreset.value,
     prompt: prompt.value,
@@ -150,14 +150,9 @@ const saveProcessState = () => {
     outputForceOpaque: outputForceOpaque.value,
     parallelCount: parallelCount.value,
   };
-  try {
-    localStorage.setItem(PROCESS_STATE_KEY, JSON.stringify(state));
-  } catch {
-    // ignore
-  }
 };
 
-const readProcessState = (): ProcessState | null => {
+const readLegacyProcessState = (): ProcessState | null => {
   try {
     const raw = localStorage.getItem(PROCESS_STATE_KEY);
     if (!raw) return null;
@@ -167,6 +162,25 @@ const readProcessState = (): ProcessState | null => {
   } catch {
     return null;
   }
+};
+
+let pendingSaveTimer: any = null;
+const scheduleSaveProcessState = () => {
+  if (pendingSaveTimer) {
+    clearTimeout(pendingSaveTimer);
+    pendingSaveTimer = null;
+  }
+
+  pendingSaveTimer = setTimeout(async () => {
+    pendingSaveTimer = null;
+    const fn = (props.api as any).setProcessState;
+    if (typeof fn !== "function") return;
+    try {
+      await fn(getCurrentProcessStateSnapshot());
+    } catch {
+      // ignore
+    }
+  }, 300);
 };
 
 const saving = ref(false);
@@ -195,6 +209,7 @@ const info = ref<any>()
 const previewUrl = ref<string | null>(null)
 const previewObjectUrl = ref<string | null>(null)
 const outputForceOpaque = ref(true)
+const showSelectionPreview = ref(false)
 
 const isGenerating = ref(false);
 const genProgress = ref(0);
@@ -337,30 +352,33 @@ watch(selectedPreset, (id) => {
 watch(
   [selectedModel, selectedPreset, prompt, useCustomRatio, selectedRatio, selectedResolution, outputForceOpaque, parallelCount],
   () => {
-    saveProcessState();
+    scheduleSaveProcessState();
   },
   { deep: false },
 );
 
 const loadConfig = async () => {
   let apiKey: string | undefined;
+  let showPreview = false;
   for (let i = 0; i < 10; i++) {
     try {
       const cfg = await withTimeout(props.api.getGlobalConfig(), 800);
       apiKey = cfg.apiKey || undefined;
+      showPreview = !!(cfg as any).showSelectionPreview;
       if (apiKey) break;
     } catch {
     }
     await sleep(200);
   }
   setSecretKey(apiKey);
+  showSelectionPreview.value = showPreview;
 };
 
 onMounted(async () => {
   await loadConfig();
 
-  const restored = readProcessState();
-  if (restored) {
+  const applyState = (restored: ProcessState | null | undefined) => {
+    if (!restored) return;
     if (typeof restored.selectedModel === "string" && modelOptions.some((x) => x.value === restored.selectedModel)) {
       selectedModel.value = restored.selectedModel;
     }
@@ -379,7 +397,34 @@ onMounted(async () => {
       const n = Math.max(1, Math.min(9, Math.floor(restored.parallelCount)));
       parallelCount.value = n;
     }
+    if (typeof restored.selectedPreset === "number" || restored.selectedPreset === null) {
+      selectedPreset.value = restored.selectedPreset as any;
+    }
+    if (typeof restored.prompt === "string") prompt.value = restored.prompt;
+  };
+
+  // 优先从宿主（dataFolder json）读取；若为空则尝试从 legacy localStorage 迁移一次
+  let restored: ProcessState | null = null;
+  try {
+    const fn = (props.api as any).getProcessState;
+    if (typeof fn === "function") {
+      const s = (await fn()) as ProcessState;
+      if (s && typeof s === "object" && Object.keys(s as any).length > 0) restored = s;
+    }
+  } catch {
   }
+  if (!restored) {
+    restored = readLegacyProcessState();
+    if (restored) {
+      try {
+        const fn = (props.api as any).setProcessState;
+        if (typeof fn === "function") await fn(restored);
+      } catch {
+      }
+    }
+  }
+
+  applyState(restored);
 
   await loadPresets();
 
@@ -789,14 +834,9 @@ const handleGenerate = async () => {
         </div>
       </t-form-item>
 
-      <!--<t-form-item v-if="previewUrl" label="选区预览">
-          <img
-            class="preview-img"
-            :key="previewUrl"
-            :src="previewUrl"
-          />
+      <t-form-item v-if="showSelectionPreview && previewUrl" label="选区预览">
+          <t-image class="preview-img" :src="previewUrl" fit="contain" />
       </t-form-item>
-      !-->
     </t-form>
 
     <t-dialog

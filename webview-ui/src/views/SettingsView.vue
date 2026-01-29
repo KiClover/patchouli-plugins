@@ -13,6 +13,7 @@ const props = defineProps<{ api: API }>();
 const apiKey = ref<string>("");
 const apiServer = ref<string>("");
 const debugPanelEnabled = ref(false);
+const showSelectionPreview = ref(false);
 
 const apiServerOptions = [
   { label: "PatchouliProxy", value: "official", disabled: true },
@@ -90,6 +91,7 @@ const loadConfig = async () => {
   apiKey.value = cfg.apiKey || "";
   apiServer.value = cfg.apiServer || apiServerOptions[1].value;
   debugPanelEnabled.value = !!cfg.debugPanelEnabled;
+  showSelectionPreview.value = !!(cfg as any).showSelectionPreview;
   setSecretKey(apiKey.value || undefined);
 };
 
@@ -108,6 +110,16 @@ const commitDebugPanel = async (val: boolean) => {
   await props.api.setDebugPanelEnabled(debugPanelEnabled.value);
   if (debugPanelEnabled.value) installOnScreenDebug("webview");
   else uninstallOnScreenDebug("webview");
+};
+
+const commitShowSelectionPreview = async (val: boolean) => {
+  showSelectionPreview.value = !!val;
+  const fn = (props.api as any).setShowSelectionPreview;
+  if (typeof fn !== "function") {
+    MessagePlugin.error("当前宿主未实现：setShowSelectionPreview");
+    return;
+  }
+  await fn(showSelectionPreview.value);
 };
 
 onMounted(() => {
@@ -152,6 +164,10 @@ const joinGroup = async () => {
       </t-form-item>
       <t-form-item label="Debug面板">
         <t-switch :value="debugPanelEnabled" @change="commitDebugPanel" />
+      </t-form-item>
+
+      <t-form-item label="选区预览">
+        <t-switch :value="showSelectionPreview" @change="commitShowSelectionPreview" />
       </t-form-item>
     </t-form>
 

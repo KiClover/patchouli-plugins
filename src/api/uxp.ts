@@ -29,13 +29,30 @@ type GlobalConfig = {
   apiKey?: string;
   apiServer?: string;
   debugPanelEnabled?: boolean;
+  showSelectionPreview?: boolean;
 };
 
 const CONFIG_FILE_NAME = "virtualai.config.json";
 
+type ProcessState = {
+  selectedModel?: string;
+  selectedPreset?: number | null;
+  prompt?: string;
+  useCustomRatio?: boolean;
+  selectedRatio?: string;
+  selectedResolution?: string;
+  outputForceOpaque?: boolean;
+  parallelCount?: number;
+};
+
+const PROCESS_STATE_FILE_NAME = "process.state.json";
+
 const DEFAULT_CONFIG: GlobalConfig = {
   apiServer: "grsai",
+  showSelectionPreview: false,
 };
+
+const DEFAULT_PROCESS_STATE: ProcessState = {};
 
 const getConfigFile = async () => {
   const fs = uxp.storage.localFileSystem;
@@ -46,6 +63,18 @@ const getConfigFile = async () => {
   const file = await folder.createFile(CONFIG_FILE_NAME, { overwrite: true });
   //@ts-ignore
   await file.write(JSON.stringify(DEFAULT_CONFIG, null, 2));
+  return file;
+};
+
+const getProcessStateFile = async () => {
+  const fs = uxp.storage.localFileSystem;
+  const folder = await fs.getDataFolder();
+  const entries = await folder.getEntries();
+  const existing = entries.find((e: { name: string }) => e.name === PROCESS_STATE_FILE_NAME);
+  if (existing) return existing;
+  const file = await folder.createFile(PROCESS_STATE_FILE_NAME, { overwrite: true });
+  //@ts-ignore
+  await file.write(JSON.stringify(DEFAULT_PROCESS_STATE, null, 2));
   return file;
 };
 
@@ -70,6 +99,28 @@ const writeConfig = async (cfg: GlobalConfig) => {
 
 export const getGlobalConfig = async (): Promise<GlobalConfig> => {
   return await readConfig();
+};
+
+export const getProcessState = async (): Promise<ProcessState> => {
+  try {
+    const file = await getProcessStateFile();
+    //@ts-ignore
+    const content = await file.read();
+    if (!content) return {};
+    const obj = JSON.parse(content);
+    if (!obj || typeof obj !== "object") return {};
+    return obj as ProcessState;
+  } catch (e) {
+    console.error("getProcessState failed", e);
+    return {};
+  }
+};
+
+export const setProcessState = async (state: ProcessState) => {
+  const file = await getProcessStateFile();
+  //@ts-ignore
+  await file.write(JSON.stringify(state || {}, null, 2));
+  return true;
 };
 
 type ApiEnvelope<T> = {
@@ -143,6 +194,13 @@ export const setApiServer = async (apiServer: string) => {
 export const setDebugPanelEnabled = async (enabled: boolean) => {
   const cfg = await readConfig();
   cfg.debugPanelEnabled = !!enabled;
+  await writeConfig(cfg);
+  return true;
+};
+
+export const setShowSelectionPreview = async (enabled: boolean) => {
+  const cfg = await readConfig();
+  cfg.showSelectionPreview = !!enabled;
   await writeConfig(cfg);
   return true;
 };
