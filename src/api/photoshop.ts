@@ -570,8 +570,8 @@ const base64ToU8 = (b64: string): Uint8Array => {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 0xff;
   return out;
 };
-
-const MAX_AUTO_DOWNSAMPLE_DIM = 4096;
+// 用于调整大图降采样
+const MAX_AUTO_DOWNSAMPLE_DIM = 8192;
 
 const computeTargetSize = (width: number, height: number) => {
   const maxDim = Math.max(width, height);
