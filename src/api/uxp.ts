@@ -43,6 +43,7 @@ type ProcessState = {
   selectedResolution?: string;
   outputForceOpaque?: boolean;
   parallelCount?: number;
+  hueShiftEnabled?: boolean;
 };
 
 const PROCESS_STATE_FILE_NAME = "process.state.json";

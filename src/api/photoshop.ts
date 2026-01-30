@@ -39,6 +39,137 @@ const urlFileName = (url: string) => {
   }
 };
 
+const hueShiftRgbU8InPlace = (rgb: Uint8Array, comps: number, hueShiftDeg: number) => {
+  const shift = ((hueShiftDeg % 360) + 360) % 360;
+  if (!shift) return;
+
+  // In-place HSV conversion; avoid extra buffers to reduce OOM risk.
+  for (let i = 0; i < rgb.length; i += comps) {
+    const r0 = rgb[i + 0] / 255;
+    const g0 = rgb[i + 1] / 255;
+    const b0 = rgb[i + 2] / 255;
+
+    const max = r0 > g0 ? (r0 > b0 ? r0 : b0) : (g0 > b0 ? g0 : b0);
+    const min = r0 < g0 ? (r0 < b0 ? r0 : b0) : (g0 < b0 ? g0 : b0);
+    const d = max - min;
+
+    // Grayscale
+    if (d === 0) continue;
+
+    let h = 0;
+    if (max === r0) h = ((g0 - b0) / d) % 6;
+    else if (max === g0) h = (b0 - r0) / d + 2;
+    else h = (r0 - g0) / d + 4;
+
+    h = (h * 60 + shift) % 360;
+    if (h < 0) h += 360;
+
+    const s = max === 0 ? 0 : d / max;
+    const v = max;
+
+    const c = v * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = v - c;
+
+    let rr = 0;
+    let gg = 0;
+    let bb = 0;
+    if (h < 60) {
+      rr = c;
+      gg = x;
+      bb = 0;
+    } else if (h < 120) {
+      rr = x;
+      gg = c;
+      bb = 0;
+    } else if (h < 180) {
+      rr = 0;
+      gg = c;
+      bb = x;
+    } else if (h < 240) {
+      rr = 0;
+      gg = x;
+      bb = c;
+    } else if (h < 300) {
+      rr = x;
+      gg = 0;
+      bb = c;
+    } else {
+      rr = c;
+      gg = 0;
+      bb = x;
+    }
+
+    rgb[i + 0] = Math.max(0, Math.min(255, Math.round((rr + m) * 255)));
+    rgb[i + 1] = Math.max(0, Math.min(255, Math.round((gg + m) * 255)));
+    rgb[i + 2] = Math.max(0, Math.min(255, Math.round((bb + m) * 255)));
+  }
+};
+
+const applyHueSaturationToTargetLayer = async (hue: number) => {
+  const hueInt = Math.max(-180, Math.min(180, Math.round(hue)));
+  await photoshop.action.batchPlay(
+    [
+      {
+        _obj: "set",
+        _target: [{ _ref: "adjustmentLayer", _enum: "ordinal", _value: "targetEnum" }],
+        to: {
+          _obj: "hueSaturation",
+          presetKind: { _enum: "presetKindType", _value: "presetKindCustom" },
+          colorize: false,
+          adjustment: [
+            {
+              _obj: "hueSatAdjustmentV2",
+              channel: { _enum: "channel", _value: "composite" },
+              hue: hueInt,
+              saturation: 0,
+              lightness: 0,
+            },
+          ],
+        },
+        _options: { dialogOptions: "dontDisplay" },
+      },
+    ],
+    {},
+  );
+};
+
+const createHueSaturationAdjustmentLayer = async (name: string, hue: number) => {
+  await photoshop.action.batchPlay(
+    [
+      {
+        _obj: "make",
+        new: { _class: "adjustmentLayer" },
+        using: {
+          _obj: "adjustmentLayer",
+          type: {
+            _obj: "hueSaturation",
+            presetKind: { _enum: "presetKindType", _value: "presetKindDefault" },
+            colorize: false,
+          },
+        },
+        _options: { dialogOptions: "dontDisplay" },
+      },
+    ],
+    {},
+  );
+
+  // Rename
+  await photoshop.action.batchPlay(
+    [
+      {
+        _obj: "set",
+        _target: [{ _ref: "layer", _enum: "ordinal", _value: "targetEnum" }],
+        to: { _obj: "layer", name },
+        _options: { dialogOptions: "dontDisplay" },
+      },
+    ],
+    {},
+  );
+
+  await applyHueSaturationToTargetLayer(hue);
+};
+
 export const placeImageUrlToSelectionAndMask = async (params: {
   url: string;
   fileName?: string;
@@ -166,7 +297,11 @@ export const placeImageUrlToSelectionAndMask = async (params: {
   }, { commandName: "Place Image URL To Selection And Mask" });
 };
 
-export const placeImageUrlsToPatchouliResGroup = async (params: { urls: string[]; groupName?: string }) => {
+export const placeImageUrlsToPatchouliResGroup = async (params: {
+  urls: string[];
+  groupName?: string;
+  hueShift180?: boolean;
+}) => {
   return await photoshop.core.executeAsModal(async () => {
     const doc = photoshop.app.activeDocument;
     if (!doc) throw new Error("No active document");
@@ -332,6 +467,25 @@ export const placeImageUrlsToPatchouliResGroup = async (params: { urls: string[]
         ],
         {},
       );
+    }
+
+    // 5) Hue 偏移：放在组内做 Hue/Saturation 调整层，几乎不额外占用 JS 内存，也不需要在 webview/JS 做像素级处理。
+    // 约定：上传前做 +180，则这里做 -180 抵消。
+    const wantHueShift = params.hueShift180 === true;
+    const shiftLayerName = "patchouli-hue-shift";
+    try {
+      const existing = (group as any)?.layers?.getByName?.(shiftLayerName);
+      if (existing) await (existing as any).delete();
+    } catch {
+      // ignore
+    }
+
+    if (wantHueShift) {
+      await createHueSaturationAdjustmentLayer(shiftLayerName, -180);
+      const adjLayer = doc.activeLayers?.[0];
+      if (adjLayer) {
+        (adjLayer as any).move(group, photoshop.constants.ElementPlacement.PLACEINSIDE);
+      }
     }
 
     return true;
@@ -635,7 +789,7 @@ const rgbaToJpegBlob = async (params: { rgba: Uint8Array; width: number; height:
   return await encodeRgbToJpegBlob({ rgb, width, height });
 };
 
-export const getCurrentSelectionPngUrl = async (params?: { applyGamma?: boolean; forceOpaque?: boolean }) => {
+export const getCurrentSelectionPngUrl = async (params?: { applyGamma?: boolean; forceOpaque?: boolean; hueShift180?: boolean }) => {
   return await photoshop.core.executeAsModal(async () => {
     const doc = photoshop.app.activeDocument;
     if (!doc) return null;
@@ -681,6 +835,10 @@ export const getCurrentSelectionPngUrl = async (params?: { applyGamma?: boolean;
         rgbU8[i + 1] = srgbEncodeLut[rgbU8[i + 1]];
         rgbU8[i + 2] = srgbEncodeLut[rgbU8[i + 2]];
       }
+    }
+
+    if (params?.hueShift180 === true) {
+      hueShiftRgbU8InPlace(rgbU8, comps, 180);
     }
 
     const maskU8 = hasSelection

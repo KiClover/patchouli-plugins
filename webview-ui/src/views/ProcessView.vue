@@ -34,6 +34,7 @@ type ProcessState = {
   selectedResolution?: string;
   outputForceOpaque?: boolean;
   parallelCount?: number;
+  hueShiftEnabled?: boolean;
 };
 
 const saveUpdate = async () => {
@@ -150,6 +151,7 @@ const getCurrentProcessStateSnapshot = (): ProcessState => {
     selectedResolution: selectedResolution.value,
     outputForceOpaque: outputForceOpaque.value,
     parallelCount: parallelCount.value,
+    hueShiftEnabled: hueShiftEnabled.value,
   };
 };
 
@@ -201,6 +203,7 @@ const useCustomRatio = ref(false);
 const selectedRatio = ref<string>(ratioOptions[0].value);
 const selectedResolution = ref<string>(resolutionOptions[1].value);
 const parallelCount = ref<number>(1);
+const hueShiftEnabled = ref(false);
 
 const maxUpload = 5;
 const uploadFiles = ref<any[]>([]);
@@ -351,7 +354,17 @@ watch(selectedPreset, (id) => {
 });
 
 watch(
-  [selectedModel, selectedPreset, prompt, useCustomRatio, selectedRatio, selectedResolution, outputForceOpaque, parallelCount],
+  [
+    selectedModel,
+    selectedPreset,
+    prompt,
+    useCustomRatio,
+    selectedRatio,
+    selectedResolution,
+    outputForceOpaque,
+    parallelCount,
+    hueShiftEnabled,
+  ],
   () => {
     scheduleSaveProcessState();
   },
@@ -402,6 +415,7 @@ onMounted(async () => {
       selectedPreset.value = restored.selectedPreset as any;
     }
     if (typeof restored.prompt === "string") prompt.value = restored.prompt;
+    if (typeof restored.hueShiftEnabled === "boolean") hueShiftEnabled.value = restored.hueShiftEnabled;
   };
 
   // 优先从宿主（dataFolder json）读取；若为空则尝试从 legacy localStorage 迁移一次
@@ -645,7 +659,10 @@ const handleGenerate = async () => {
   if (!cfg.apiServer) throw new Error("请先在设置里选择模型服务器");
 
   if (cfg.apiServer === "grsai") {
-    const sel = await props.api.getCurrentSelectionPngUrl?.({ forceOpaque: outputForceOpaque.value } as any);
+    const sel = await props.api.getCurrentSelectionPngUrl?.({
+      forceOpaque: outputForceOpaque.value,
+      hueShift180: hueShiftEnabled.value,
+    } as any);
     if (!sel || !(sel as any).url) {
       MessagePlugin.warning("未获取到选区像素：请确认已打开文档并创建选区");
       return;
@@ -745,7 +762,7 @@ const handleGenerate = async () => {
       throw new Error("当前宿主未实现：将多张结果图写回 patchouli-res 并在组上添加蒙版");
     }
     MessagePlugin.info("正在回写到 patchouli-res 并添加组蒙版...");
-    await fn({ urls: urlsOut });
+    await fn({ urls: urlsOut, hueShift180: hueShiftEnabled.value });
     MessagePlugin.success("已回写到 patchouli-res 并添加组蒙版");
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -815,6 +832,10 @@ const handleGenerate = async () => {
 
       <t-form-item label="并发数">
         <t-input-number v-model="parallelCount" :min="1" :max="9" />
+      </t-form-item>
+
+      <t-form-item label="色相偏移">
+        <t-switch v-model="hueShiftEnabled" />
       </t-form-item>
       <!--
       <t-form-item label="移除透明通道">
