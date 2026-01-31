@@ -9,7 +9,8 @@
   "dependencies": {
     "axios": "^1.7.9",
     "comlink": "^4.4.2",
-    "tdesign-vue-next": "^1.15.0",
+    "tdesign-vue-next": "^1.17.6",
+    "@tdesign-vue-next/chat": "0.5.0-alpha.10",
     "vue": "^3.5.16"
   },
   "devDependencies": {

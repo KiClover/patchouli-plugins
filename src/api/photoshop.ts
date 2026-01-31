@@ -783,12 +783,6 @@ const rgbaToRgbU8 = (rgba: Uint8Array): Uint8Array => {
   return rgb;
 };
 
-const rgbaToJpegBlob = async (params: { rgba: Uint8Array; width: number; height: number }): Promise<Blob> => {
-  const { rgba, width, height } = params;
-  const rgb = rgbaToRgbU8(rgba);
-  return await encodeRgbToJpegBlob({ rgb, width, height });
-};
-
 export const getCurrentSelectionPngUrl = async (params?: { applyGamma?: boolean; forceOpaque?: boolean; hueShift180?: boolean }) => {
   return await photoshop.core.executeAsModal(async () => {
     const doc = photoshop.app.activeDocument;
@@ -880,6 +874,66 @@ export const getCurrentSelectionPngUrl = async (params?: { applyGamma?: boolean;
     const url = await uploadBlobToGrsai(blob, "jpg");
     return { width: outW, height: outH, url };
   }, { commandName: "Upload Selection PNG" });
+};
+
+export const getCurrentCanvasPngUrl = async (params?: { applyGamma?: boolean; forceOpaque?: boolean }) => {
+  return await photoshop.core.executeAsModal(async () => {
+    const doc = photoshop.app.activeDocument;
+    if (!doc) return null;
+
+    const width = Math.max(1, Math.round(toPx((doc as any).width)));
+    const height = Math.max(1, Math.round(toPx((doc as any).height)));
+    const sourceBounds = { left: 0, top: 0, right: width, bottom: height, width, height };
+
+    const pixelsResult = await photoshop.imaging.getPixels({
+      documentID: doc.id,
+      sourceBounds,
+      colorSpace: "RGB",
+      applyAlpha: false,
+      hasAlpha: true,
+      colorProfile: "sRGB IEC61966-2.1",
+    } as any);
+    const rgbImageData = pixelsResult.imageData;
+    const rgbRaw = await rgbImageData.getData({} as any);
+    rgbImageData.dispose();
+
+    const totalPixels = width * height;
+    const rawLen = (rgbRaw as any)?.length ?? 0;
+    const comps = rawLen / totalPixels;
+    if (comps !== 3 && comps !== 4) {
+      throw new Error(`Unexpected pixel components: ${comps}`);
+    }
+
+    const rgbU8 = normalizeToUint8(rgbRaw, totalPixels * comps, "rgb");
+    const applyGamma = params?.applyGamma === true;
+    if (applyGamma) {
+      for (let i = 0; i < rgbU8.length; i += comps) {
+        rgbU8[i + 0] = srgbEncodeLut[rgbU8[i + 0]];
+        rgbU8[i + 1] = srgbEncodeLut[rgbU8[i + 1]];
+        rgbU8[i + 2] = srgbEncodeLut[rgbU8[i + 2]];
+      }
+    }
+
+    const rgba = new Uint8Array(width * height * 4);
+    for (let i = 0; i < width * height; i++) {
+      const r = rgbU8[i * comps + 0];
+      const g = rgbU8[i * comps + 1];
+      const b = rgbU8[i * comps + 2];
+      const a = comps === 4 ? rgbU8[i * comps + 3] : 255;
+      rgba[i * 4 + 0] = r;
+      rgba[i * 4 + 1] = g;
+      rgba[i * 4 + 2] = b;
+      rgba[i * 4 + 3] = a;
+    }
+
+    if (params?.forceOpaque === true) {
+      for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+    }
+
+    const blob = await rgbaToPngBlob({ rgba, width, height });
+    const url = await uploadBlobToGrsai(blob, "png");
+    return { width, height, url };
+  }, { commandName: "Upload Canvas PNG" });
 };
 
 export const getProjectInfo = async () => {

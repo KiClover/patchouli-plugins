@@ -12,6 +12,7 @@
     "hmr": "vite"
   },
   "dependencies": {
+    "@tdesign-vue-next/chat": "0.5.0-alpha.10",
     "comlink": "^4.4.2",
     "tdesign-icons-vue-next": "^0.4.2",
     "vue": "^3.5.17"
