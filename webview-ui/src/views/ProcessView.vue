@@ -830,12 +830,14 @@ const handleGenerate = async () => {
         <t-select v-model="selectedResolution" :options="resolutionOptions" />
       </t-form-item>
 
-      <t-form-item label="并发数">
-        <t-input-number v-model="parallelCount" :min="1" :max="9" />
+      <t-form-item label="色相偏移">
+        <t-tooltip content="色相偏移用于规避AI可能的违规拦截行为，不建议长时开启">
+          <t-switch v-model="hueShiftEnabled" />
+        </t-tooltip>
       </t-form-item>
 
-      <t-form-item label="色相偏移">
-        <t-switch v-model="hueShiftEnabled" />
+      <t-form-item label="并发数">
+        <t-input-number v-model="parallelCount" :min="1" :max="9" />
       </t-form-item>
       <!--
       <t-form-item label="移除透明通道">

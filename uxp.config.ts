@@ -37,16 +37,16 @@ const manifest: UXP_Manifest = {
       preferredFloatingSize: { width: 450, height: 400 },
       icons: [
         {
-          width: 23,
-          height: 23,
-          path: "icons/dark.png",
+          width: 32,
+          height: 32,
+          path: "icon.png",
           scale: [1, 2],
           theme: ["darkest", "dark", "medium"],
         },
         {
-          width: 23,
-          height: 23,
-          path: "icons/light.png",
+          width: 32,
+          height: 32,
+          path: "icon.png",
           scale: [1, 2],
           theme: ["lightest", "light"],
         },
@@ -148,9 +148,9 @@ const manifest: UXP_Manifest = {
   },
     icons: [
     {
-      width: 48,
-      height: 48,
-      path: "icons/plugin-icon.png",
+      width: 32,
+      height: 32,
+      path: "icon.png",
       scale: [1, 2],
       theme: ["darkest", "dark", "medium", "lightest", "light", "all"],
       species: ["pluginList"],
