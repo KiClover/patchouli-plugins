@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { MessagePlugin } from "tdesign-vue-next";
 import { ImageAddIcon } from "tdesign-icons-vue-next";
 
@@ -27,6 +27,9 @@ type GrsUploadTokenZHResponse = {
 
 const props = defineProps<{ api: API; secretReady: boolean }>();
 
+const CHAT_STORAGE_KEY = "uxp-psai.chatbot.messages.v1";
+const CHAT_MODEL_KEY = "uxp-psai.chatbot.model.v1";
+
 const selectOptions = [
   { label: "nano-banana-fast", value: "nano-banana-fast" },
   { label: "nano-banana", value: "nano-banana" },
@@ -41,9 +44,9 @@ const selectValue = ref<{ label: string; value: string }>(selectOptions[0]);
 
 const sending = ref(false);
 
-const thinkingText = ref("");
-const thinkingStatus = ref<"streaming" | "complete">("streaming");
 const inThink = ref(false);
+const thinkPending = ref("");
+const hasThinkingInTurn = ref(false);
 
 const useSelectionImage = ref(false);
 const useCanvasImage = ref(false);
@@ -63,51 +66,141 @@ const toggleCanvas = () => {
   ensureMutualExclusive("canvas");
 };
 
-const resetThinking = () => {
-  thinkingText.value = "";
-  thinkingStatus.value = "streaming";
-  inThink.value = false;
-};
+const splitThinkStream = (delta: string): {
+  reasoningDelta: string;
+  answerDelta: string;
+  thinkOpened: boolean;
+  thinkClosed: boolean;
+} => {
+  const tags = ["<think>", "</think>"];
+  let s = `${thinkPending.value}${String(delta || "")}`;
+  thinkPending.value = "";
 
-const consumeThinkFromDelta = (delta: string): { visible: string } => {
-  let s = String(delta || "");
-  let out = "";
+  const keepTail = () => {
+    let best = "";
+    for (const t of tags) {
+      for (let i = 1; i < t.length; i++) {
+        const prefix = t.slice(0, i);
+        if (s.endsWith(prefix) && prefix.length > best.length) best = prefix;
+      }
+    }
+    if (best) {
+      thinkPending.value = best;
+      s = s.slice(0, -best.length);
+    }
+  };
 
+  keepTail();
+
+  let reasoningDelta = "";
+  let answerDelta = "";
+  let thinkOpened = false;
+  let thinkClosed = false;
   while (s.length > 0) {
     if (inThink.value) {
       const endIdx = s.indexOf("</think>");
       if (endIdx === -1) {
-        thinkingText.value += s;
+        reasoningDelta += s;
         s = "";
         break;
       }
-      thinkingText.value += s.slice(0, endIdx);
+      reasoningDelta += s.slice(0, endIdx);
       s = s.slice(endIdx + "</think>".length);
       inThink.value = false;
-      thinkingStatus.value = "complete";
+      thinkClosed = true;
       continue;
     }
 
     const startIdx = s.indexOf("<think>");
     if (startIdx === -1) {
-      out += s;
+      answerDelta += s;
       s = "";
       break;
     }
 
-    out += s.slice(0, startIdx);
+    answerDelta += s.slice(0, startIdx);
     s = s.slice(startIdx + "<think>".length);
     inThink.value = true;
-    thinkingStatus.value = "streaming";
+    thinkOpened = true;
   }
 
-  return { visible: out };
+  return { reasoningDelta, answerDelta, thinkOpened, thinkClosed };
 };
 
 const chatRef = ref<TdChatbotApi | null>(null);
 
 const files = ref<TdAttachmentItem[]>([]);
 const mockMessage = ref<ChatMessagesData[]>([]);
+
+const loadPersistedModel = () => {
+  try {
+    const raw = localStorage.getItem(CHAT_MODEL_KEY);
+    if (!raw) return;
+    const val = String(raw).trim();
+    const found = selectOptions.find((x) => x.value === val);
+    if (found) selectValue.value = found;
+  } catch {
+  }
+};
+
+watch(
+  chatRef,
+  (v) => {
+    if (!v) return;
+    v.registerMergeStrategy?.("markdown" as any, (chunk: any, existing?: any) => {
+      if (!existing) return chunk;
+      return {
+        ...existing,
+        data: `${String(existing.data || "")}${String(chunk?.data || "")}`,
+      };
+    });
+
+    v.registerMergeStrategy?.("thinking" as any, (chunk: any, existing?: any) => {
+      if (!existing) return chunk;
+      const exText = String(existing?.data?.text || "");
+      const chText = String(chunk?.data?.text || "");
+      return {
+        ...existing,
+        status: chunk?.status ?? existing?.status,
+        data: {
+          ...(existing?.data || {}),
+          ...(chunk?.data || {}),
+          title: String((chunk?.data?.title ?? existing?.data?.title) || ""),
+          text: `${exText}${chText}`,
+        },
+      };
+    });
+  },
+  { immediate: true },
+);
+
+const loadPersistedMessages = () => {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return;
+    mockMessage.value = arr as ChatMessagesData[];
+    if (mockMessage.value.length > 0) {
+      chatRef.value?.setMessages?.(mockMessage.value as any);
+    }
+  } catch {
+  }
+};
+
+const persistMessages = () => {
+  try {
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(mockMessage.value || []));
+  } catch {
+  }
+};
+
+const persistModel = () => {
+  try {
+    localStorage.setItem(CHAT_MODEL_KEY, String(selectValue.value?.value || ""));
+  } catch {
+  }
+};
 
 const defaultMessages: ChatMessagesData[] = [
   {
@@ -117,7 +210,7 @@ const defaultMessages: ChatMessagesData[] = [
       {
         type: "text",
         status: "complete",
-        data: "欢迎使用语言之书，你可以选择模型、附带选区/画布图片，并上传参考图。",
+        data: "欢迎使用预言之书，你可以选择模型、附带选区/画布图片，并上传参考图。",
       },
     ],
   },
@@ -274,7 +367,20 @@ const chatServiceConfig = computed<ChatServiceConfig>(() => {
     stream: true,
     onComplete: () => {
       sending.value = false;
-      if (thinkingText.value) thinkingStatus.value = "complete";
+      const finalize = hasThinkingInTurn.value
+        ? ({
+            type: "thinking",
+            data: { title: "思考", text: "" },
+            status: "complete",
+            strategy: "merge",
+          } as any)
+        : undefined;
+
+      thinkPending.value = "";
+      inThink.value = false;
+      hasThinkingInTurn.value = false;
+
+      return finalize as any;
     },
     onError: (err: Error | Response) => {
       sending.value = false;
@@ -286,15 +392,50 @@ const chatServiceConfig = computed<ChatServiceConfig>(() => {
     onMessage: (chunk: SSEChunkData): AIMessageContent => {
       const delta = (chunk as any)?.data?.choices?.[0]?.delta?.content;
       const raw = typeof delta === "string" ? delta : "";
-      const { visible } = consumeThinkFromDelta(raw);
-      return {
-        type: "markdown",
-        data: visible,
-      } as any;
+
+      const { reasoningDelta, answerDelta, thinkOpened, thinkClosed } = splitThinkStream(raw);
+      const out: any[] = [];
+      if (thinkOpened) hasThinkingInTurn.value = true;
+      if (reasoningDelta) {
+        hasThinkingInTurn.value = true;
+        out.push({
+          type: "thinking",
+          data: {
+            title: "思考",
+            text: reasoningDelta,
+          },
+          status: "streaming",
+          strategy: "merge",
+        });
+      }
+      if (thinkClosed) {
+        out.push({
+          type: "thinking",
+          data: {
+            title: "思考",
+            text: "",
+          },
+          status: "complete",
+          strategy: "merge",
+        });
+      }
+      if (answerDelta) {
+        out.push({
+          type: "markdown",
+          data: answerDelta,
+          status: "streaming",
+          strategy: "merge",
+        });
+      }
+
+      if (out.length === 0) return null as any;
+      return (out.length === 1 ? out[0] : out) as any;
     },
     onRequest: async (innerParams: ChatRequestParams) => {
       sending.value = true;
-      resetThinking();
+      thinkPending.value = "";
+      inThink.value = false;
+      hasThinkingInTurn.value = false;
       const cfg = await props.api.getGlobalConfig();
       if (cfg.apiServer !== "grsai") throw new Error("当前 Chat 仅实现 grsai 模型服务器");
 
@@ -353,6 +494,7 @@ const chatServiceConfig = computed<ChatServiceConfig>(() => {
 
 const handleMessageChange = (e: CustomEvent<ChatMessagesData[]>) => {
   mockMessage.value = e.detail || [];
+  persistMessages();
 };
 
 const onSend = (e: CustomEvent<ChatRequestParams>): ChatRequestParams => {
@@ -377,18 +519,29 @@ const senderProps = computed(() => {
     onFileRemove,
   } as any;
 });
+
+watch(
+  selectValue,
+  () => {
+    persistModel();
+  },
+  { deep: true },
+);
+
+watch(
+  chatRef,
+  (v) => {
+    if (v) {
+      loadPersistedModel();
+      loadPersistedMessages();
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
   <div class="chat-view">
-    <div v-if="thinkingText" class="thinking-panel">
-      <t-chat-thinking
-        :content="{
-          title: thinkingStatus === 'streaming' ? '思考中' : '思考完成',
-          text: thinkingText,
-        }"
-      />
-    </div>
     <div class="chat-main">
       <t-chatbot
         ref="chatRef"
@@ -454,10 +607,7 @@ const senderProps = computed(() => {
   display: flex;
   flex-direction: column;
   min-height: 0;
-}
-
-.thinking-panel {
-  margin-bottom: 12px;
+  overflow: hidden;
 }
 
 .chat-main {
@@ -467,6 +617,8 @@ const senderProps = computed(() => {
 }
 
 t-chatbot {
+  display: block;
+  height: 100%;
   flex: 1;
   min-height: 0;
 }
