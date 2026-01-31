@@ -27,12 +27,7 @@ type GrsUploadTokenZHResponse = {
 
 const props = defineProps<{ api: API; secretReady: boolean }>();
 
-const CHAT_STORAGE_KEY = "uxp-psai.chatbot.messages.v1";
-const CHAT_MODEL_KEY = "uxp-psai.chatbot.model.v1";
-
 const selectOptions = [
-  { label: "nano-banana-fast", value: "nano-banana-fast" },
-  { label: "nano-banana", value: "nano-banana" },
   { label: "gemini-3-pro", value: "gemini-3-pro" },
   { label: "gemini-2.5-pro", value: "gemini-2.5-pro" },
   { label: "gemini-2.5-flash", value: "gemini-2.5-flash" },
@@ -128,20 +123,12 @@ const splitThinkStream = (delta: string): {
 };
 
 const chatRef = ref<TdChatbotApi | null>(null);
+const isRestoring = ref(false);
+const clearDialogVisible = ref(false);
+const ready = ref(false);
 
 const files = ref<TdAttachmentItem[]>([]);
 const mockMessage = ref<ChatMessagesData[]>([]);
-
-const loadPersistedModel = () => {
-  try {
-    const raw = localStorage.getItem(CHAT_MODEL_KEY);
-    if (!raw) return;
-    const val = String(raw).trim();
-    const found = selectOptions.find((x) => x.value === val);
-    if (found) selectValue.value = found;
-  } catch {
-  }
-};
 
 watch(
   chatRef,
@@ -174,32 +161,107 @@ watch(
   { immediate: true },
 );
 
-const loadPersistedMessages = () => {
-  try {
-    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
-    if (!raw) return;
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return;
-    mockMessage.value = arr as ChatMessagesData[];
-    if (mockMessage.value.length > 0) {
-      chatRef.value?.setMessages?.(mockMessage.value as any);
+const sanitizeForJson = <T>(v: T): T => {
+  return JSON.parse(
+    JSON.stringify(v, (_k, val) => {
+      if (typeof val === "function") return undefined;
+      if (typeof val === "bigint") return String(val);
+      return val;
+    }),
+  ) as T;
+};
+
+let pendingSaveTimer: any = null;
+const scheduleSaveChatState = () => {
+  if (pendingSaveTimer) {
+    clearTimeout(pendingSaveTimer);
+    pendingSaveTimer = null;
+  }
+
+  pendingSaveTimer = setTimeout(async () => {
+    pendingSaveTimer = null;
+    const fn = (props.api as any).setChatState;
+    if (typeof fn !== "function") return;
+    try {
+      await fn(
+        sanitizeForJson({
+          selectedModel: selectValue.value?.value,
+          messages: mockMessage.value || [],
+        }),
+      );
+    } catch {
     }
-  } catch {
+  }, 300);
+};
+
+const loadPersistedState = async () => {
+  const fn = (props.api as any).getChatState;
+  if (typeof fn !== "function") return;
+
+  const state = (await fn().catch(() => ({}))) as any;
+  const model = String(state?.selectedModel || "").trim();
+  if (model) {
+    const found = selectOptions.find((x) => x.value === model);
+    if (found) selectValue.value = found;
+  }
+
+  const msgs = state?.messages;
+  if (Array.isArray(msgs) && msgs.length > 0) {
+    isRestoring.value = true;
+    mockMessage.value = msgs as ChatMessagesData[];
+    chatRef.value?.setMessages?.(mockMessage.value as any, "replace" as any);
+    Promise.resolve().then(() => {
+      isRestoring.value = false;
+    });
   }
 };
 
-const persistMessages = () => {
-  try {
-    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(mockMessage.value || []));
-  } catch {
-  }
+const onChatReady = async () => {
+  await loadPersistedState();
+  ready.value = true;
 };
 
-const persistModel = () => {
-  try {
-    localStorage.setItem(CHAT_MODEL_KEY, String(selectValue.value?.value || ""));
-  } catch {
+const QUICK_NANOBANANA_PROMPT =
+  "你是一个资深二次元cos后期特效师，请分析图中的角色并为我写出符合人物动作和人物人设和背景的特效适用于NanobananaPro的自然语言特效生成提示词，用形如 角色：xx 提示词：xx的方式为我写出，注意需要让其保持角色主体严格不变";
+const QUICK_FT_PROMPT = "你是一个资深二次元cos后期特效师，请分析图片为我反推出适用于NanobananaPro的自然语言为角色添加特效和合成的生成提示词，注意需要让其保持角色主体严格不变，用形如提示词：xx的方式为我写出"
+
+const quickPrompts = [
+  {
+    label: "根据选区获取角色特效提示词",
+    prompt: QUICK_NANOBANANA_PROMPT,
+  },
+  { label: "根据参考图反推提示词",
+    prompt: QUICK_FT_PROMPT},
+];
+
+const handleQuickPrompt = (prompt: string) => {
+  if (!ready.value) return;
+  chatRef.value?.addPrompt?.(prompt);
+};
+
+const openClearDialog = () => {
+  if (sending.value) return;
+  clearDialogVisible.value = true;
+};
+
+const doClearHistory = async () => {
+  if (sending.value) return;
+  const fn = (props.api as any).clearChatState;
+  if (typeof fn === "function") {
+    try {
+      await fn();
+    } catch {
+    }
   }
+
+  isRestoring.value = true;
+  mockMessage.value = [];
+  chatRef.value?.clearMessages?.();
+  chatRef.value?.setMessages?.(defaultMessages as any, "replace" as any);
+  Promise.resolve().then(() => {
+    isRestoring.value = false;
+  });
+  clearDialogVisible.value = false;
 };
 
 const defaultMessages: ChatMessagesData[] = [
@@ -210,7 +272,7 @@ const defaultMessages: ChatMessagesData[] = [
       {
         type: "text",
         status: "complete",
-        data: "欢迎使用预言之书，你可以选择模型、附带选区/画布图片，并上传参考图。",
+        data: "欢迎使用预言之书，你可以选择模型、附带选区图片，并上传参考图。",
       },
     ],
   },
@@ -260,13 +322,55 @@ const uploadBlobToGrsai = async (blob: Blob, providerKey: string): Promise<strin
   return `${String(domain).replace(/\/$/, "")}/${String(key).replace(/^\//, "")}`;
 };
 
-const onAttachClick = () => {
-  chatRef.value?.selectFile();
+const onAttachClick = async () => {
+  if (sending.value) return;
+  const fn = (props.api as any).pickAndUploadChatReferenceImages;
+  if (typeof fn !== "function") {
+    MessagePlugin.error("当前环境不支持选择参考图");
+    return;
+  }
+
+  MessagePlugin.info("请选择参考图...");
+  try {
+    const res = (await fn().catch(() => [])) as Array<{ name: string; url: string }>;
+    if (!Array.isArray(res) || res.length === 0) return;
+
+    files.value = [
+      ...res.map((it) => ({
+        name: String(it?.name || "参考图"),
+        url: String(it?.url || ""),
+        status: "success",
+        description: "上传成功",
+      } as any)),
+      ...files.value,
+    ];
+
+    MessagePlugin.success(`参考图上传成功（${res.length}张）`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    MessagePlugin.error(msg);
+  }
+};
+
+const getRawFromAttachmentItem = (item: any): any => {
+  return (
+    item?.raw ||
+    item?.file ||
+    item?.originFileObj ||
+    item?.response?.raw ||
+    item?.url ||
+    item?.previewUrl ||
+    item?.data ||
+    item?.blob
+  );
 };
 
 const onFileSelect = async (e: CustomEvent<TdAttachmentItem[]>) => {
-  const currFiles = e.detail || [];
+  const detail: any = (e as any)?.detail;
+  const currFiles = (Array.isArray(detail) ? detail : Array.isArray(detail?.files) ? detail.files : []) as TdAttachmentItem[];
   if (currFiles.length === 0) return;
+
+  MessagePlugin.info(`开始上传参考图（${currFiles.length}张）...`);
 
   const cfg = await props.api.getGlobalConfig();
   if (cfg.apiServer !== "grsai") {
@@ -281,8 +385,30 @@ const onFileSelect = async (e: CustomEvent<TdAttachmentItem[]>) => {
   }
 
   for (const f of currFiles) {
-    const raw: any = (f as any)?.raw || (f as any)?.file || (f as any)?.originFileObj;
-    if (!(raw instanceof Blob)) continue;
+    let raw: any = getRawFromAttachmentItem(f as any);
+
+    if (typeof raw === "string" && (raw.startsWith("blob:") || raw.startsWith("data:"))) {
+      try {
+        const res = await fetch(raw);
+        if (res.ok) {
+          raw = await res.blob();
+        }
+      } catch {
+      }
+    }
+
+    if (raw && !(raw instanceof Blob) && typeof raw?.arrayBuffer === "function") {
+      try {
+        const ab = await raw.arrayBuffer();
+        raw = new Blob([ab], { type: String(raw?.type || "application/octet-stream") });
+      } catch {
+      }
+    }
+
+    if (!(raw instanceof Blob)) {
+      MessagePlugin.warning("未获取到可上传的文件对象：请重新选择参考图");
+      continue;
+    }
 
     const newFile: any = {
       ...(f as any),
@@ -303,6 +429,7 @@ const onFileSelect = async (e: CustomEvent<TdAttachmentItem[]>) => {
             }
           : x,
       );
+      MessagePlugin.success("参考图上传成功");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       files.value = files.value.map((x: any) =>
@@ -320,7 +447,10 @@ const onFileSelect = async (e: CustomEvent<TdAttachmentItem[]>) => {
 };
 
 const onFileRemove = (e: CustomEvent<TdAttachmentItem[]>) => {
-  files.value = e.detail || [];
+  const detail: any = (e as any)?.detail;
+  const next = (Array.isArray(detail) ? detail : Array.isArray(detail?.files) ? detail.files : []) as TdAttachmentItem[];
+  files.value = next;
+  if (!isRestoring.value) scheduleSaveChatState();
 };
 
 const buildVisionParts = (urls: string[]) => {
@@ -339,6 +469,43 @@ const extractPlainText = (content: any): string => {
   return texts.join("\n").trim();
 };
 
+const patchUserMessageAttachments = (messageID: string | undefined, items: any[]) => {
+  if (!items || items.length === 0) return;
+  const id = String(messageID || "").trim();
+  const msgs = (chatRef.value?.chatMessageValue || []) as any[];
+  if (msgs.length === 0) return;
+
+  const idx = id ? msgs.findIndex((m) => m && m.id === id) : -1;
+  const targetIndex = idx >= 0 ? idx : (() => {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i]?.role === "user") return i;
+    }
+    return -1;
+  })();
+  if (targetIndex < 0) return;
+
+  const m = msgs[targetIndex];
+  const contentArr = Array.isArray(m?.content) ? [...m.content] : [];
+
+  const existingAttachmentIdx = contentArr.findIndex((c: any) => c?.type === "attachment");
+  if (existingAttachmentIdx >= 0) {
+    const ex = contentArr[existingAttachmentIdx];
+    const exData = Array.isArray(ex?.data) ? ex.data : [];
+    contentArr[existingAttachmentIdx] = {
+      ...ex,
+      data: [...exData, ...items],
+    };
+  } else {
+    contentArr.push({ type: "attachment", data: items });
+  }
+
+  const nextMsgs = msgs.map((x, i) => (i === targetIndex ? { ...m, content: contentArr } : x));
+  chatRef.value?.setMessages?.(nextMsgs as any, "replace" as any);
+
+  mockMessage.value = nextMsgs as any;
+  if (!isRestoring.value) scheduleSaveChatState();
+};
+
 const messageProps = (msg: ChatMessagesData): any => {
   if (msg.role === "user") {
     return {
@@ -351,6 +518,11 @@ const messageProps = (msg: ChatMessagesData): any => {
     return {
       placement: "left",
       actions: ["replay", "copy"],
+      chatContentProps: {
+        thinking: {
+          defaultCollapsed: true,
+        },
+      },
       handleActions: {
         replay: () => {
           chatRef.value?.regenerate();
@@ -445,19 +617,46 @@ const chatServiceConfig = computed<ChatServiceConfig>(() => {
       const prompt = String((innerParams as any)?.prompt || "").trim();
 
       const urls: string[] = [];
+      const attachmentItems: any[] = [];
       if (useSelectionImage.value) {
         const sel = await props.api.getCurrentSelectionPngUrl?.({ forceOpaque: true } as any);
         const u = (sel as any)?.url;
-        if (u) urls.push(String(u));
+        if (u) {
+          urls.push(String(u));
+          attachmentItems.push({
+            name: "选区",
+            url: String(u),
+            status: "success",
+            description: "选区",
+          });
+        }
       }
       if (useCanvasImage.value) {
         const canvas = await props.api.getCurrentCanvasPngUrl?.({ forceOpaque: true } as any);
         const u = (canvas as any)?.url;
-        if (u) urls.push(String(u));
+        if (u) {
+          urls.push(String(u));
+          attachmentItems.push({
+            name: "画布",
+            url: String(u),
+            status: "success",
+            description: "画布",
+          });
+        }
       }
       for (const f of files.value as any[]) {
-        if (f?.status === "success" && f?.url) urls.push(String(f.url));
+        if (f?.status === "success" && f?.url) {
+          urls.push(String(f.url));
+          attachmentItems.push({
+            name: String(f?.name || "参考图"),
+            url: String(f.url),
+            status: "success",
+            description: "参考图",
+          });
+        }
       }
+
+      patchUserMessageAttachments(String((innerParams as any)?.messageID || ""), attachmentItems);
 
       const openaiMessages: any[] = [];
       const history = mockMessage.value || [];
@@ -494,7 +693,7 @@ const chatServiceConfig = computed<ChatServiceConfig>(() => {
 
 const handleMessageChange = (e: CustomEvent<ChatMessagesData[]>) => {
   mockMessage.value = e.detail || [];
-  persistMessages();
+  if (!isRestoring.value) scheduleSaveChatState();
 };
 
 const onSend = (e: CustomEvent<ChatRequestParams>): ChatRequestParams => {
@@ -508,14 +707,10 @@ const onSend = (e: CustomEvent<ChatRequestParams>): ChatRequestParams => {
 const senderProps = computed(() => {
   return {
     placeholder: "有问题，尽管问～ Enter 发送，Shift+Enter 换行",
-    uploadProps: {
-      multiple: true,
-      accept: "image/*",
-    },
+    actions: ["send"],
     attachmentsProps: {
       items: files.value,
     },
-    onFileSelect,
     onFileRemove,
   } as any;
 });
@@ -523,25 +718,36 @@ const senderProps = computed(() => {
 watch(
   selectValue,
   () => {
-    persistModel();
+    if (!isRestoring.value) scheduleSaveChatState();
   },
   { deep: true },
-);
-
-watch(
-  chatRef,
-  (v) => {
-    if (v) {
-      loadPersistedModel();
-      loadPersistedMessages();
-    }
-  },
-  { immediate: true },
 );
 </script>
 
 <template>
   <div class="chat-view">
+    <div class="chat-header">
+      <t-button class="clear-btn" shape="round" variant="outline" :disabled="sending" @click="openClearDialog">
+        清空聊天
+      </t-button>
+    </div>
+
+    <div class="quick-prompts">
+      <div class="prompts-title">快捷指令：</div>
+      <div class="prompts-buttons">
+        <t-button
+          v-for="(item, index) in quickPrompts"
+          :key="index"
+          size="small"
+          variant="outline"
+          :disabled="!ready || sending"
+          @click="handleQuickPrompt(item.prompt)"
+        >
+          {{ item.label }}
+        </t-button>
+      </div>
+    </div>
+
     <div class="chat-main">
       <t-chatbot
         ref="chatRef"
@@ -550,6 +756,7 @@ watch(
         :sender-props="senderProps"
         :chat-service-config="chatServiceConfig"
         @message-change="handleMessageChange"
+        @chat-ready="onChatReady"
         @chat-after-send="onSend"
       >
         <template #sender-footer-prefix>
@@ -577,7 +784,7 @@ watch(
             >
               选区
             </t-button>
-
+            <!--
             <t-button
               class="chip"
               :class="{ 'is-active': useCanvasImage }"
@@ -588,7 +795,7 @@ watch(
             >
               画布
             </t-button>
-
+            -->
             <t-button class="chip" shape="round" variant="outline" :disabled="sending" @click="onAttachClick">
               <template #icon><ImageAddIcon /></template>
               参考图
@@ -597,6 +804,15 @@ watch(
         </template>
       </t-chatbot>
     </div>
+
+    <t-dialog
+      v-model:visible="clearDialogVisible"
+      header="确认清空"
+      body="确定清空聊天记录吗？此操作不可恢复。"
+      :confirm-btn="{ content: '清空', theme: 'danger' }"
+      :cancel-btn="{ content: '取消' }"
+      @confirm="doClearHistory"
+    />
   </div>
 </template>
 
@@ -608,6 +824,42 @@ watch(
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+.chat-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.chat-header .clear-btn {
+  height: var(--td-comp-size-m);
+  border-radius: 32px;
+}
+
+.quick-prompts {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quick-prompts .prompts-title {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+.quick-prompts .prompts-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .chat-main {

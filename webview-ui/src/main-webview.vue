@@ -59,14 +59,14 @@ document.documentElement.setAttribute('theme-mode', 'dark');
       <t-tab-panel value="process" label="魔导回路">
         <ProcessView :api="api" :secret-ready="secretReady" />
       </t-tab-panel>
-      <t-tab-panel value="chat" label="Chat">
-        <ChatView :api="api" :secret-ready="secretReady" />
+      <t-tab-panel value="preset" label="魔导书">
+        <PresetView :api="api" :secret-ready="secretReady" />
       </t-tab-panel>
       <t-tab-panel value="community" label="大图书馆">
         <CommunityView :api="api" :secret-ready="secretReady" />
       </t-tab-panel>
-      <t-tab-panel value="preset" label="魔导书">
-        <PresetView :api="api" :secret-ready="secretReady" />
+      <t-tab-panel value="chat" label="预言之书">
+        <ChatView :api="api" :secret-ready="secretReady" />
       </t-tab-panel>
       <t-tab-panel value="settings" label="设置">
         <SettingsView :api="api" />

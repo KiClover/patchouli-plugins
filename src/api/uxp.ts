@@ -48,12 +48,21 @@ type ProcessState = {
 
 const PROCESS_STATE_FILE_NAME = "process.state.json";
 
+type ChatState = {
+  selectedModel?: string;
+  messages?: any[];
+};
+
+const CHAT_STATE_FILE_NAME = "chat.state.json";
+
 const DEFAULT_CONFIG: GlobalConfig = {
   apiServer: "grsai",
   showSelectionPreview: false,
 };
 
 const DEFAULT_PROCESS_STATE: ProcessState = {};
+
+const DEFAULT_CHAT_STATE: ChatState = {};
 
 const getConfigFile = async () => {
   const fs = uxp.storage.localFileSystem;
@@ -76,6 +85,18 @@ const getProcessStateFile = async () => {
   const file = await folder.createFile(PROCESS_STATE_FILE_NAME, { overwrite: true });
   //@ts-ignore
   await file.write(JSON.stringify(DEFAULT_PROCESS_STATE, null, 2));
+  return file;
+};
+
+const getChatStateFile = async () => {
+  const fs = uxp.storage.localFileSystem;
+  const folder = await fs.getDataFolder();
+  const entries = await folder.getEntries();
+  const existing = entries.find((e: { name: string }) => e.name === CHAT_STATE_FILE_NAME);
+  if (existing) return existing;
+  const file = await folder.createFile(CHAT_STATE_FILE_NAME, { overwrite: true });
+  //@ts-ignore
+  await file.write(JSON.stringify(DEFAULT_CHAT_STATE, null, 2));
   return file;
 };
 
@@ -122,6 +143,118 @@ export const setProcessState = async (state: ProcessState) => {
   //@ts-ignore
   await file.write(JSON.stringify(state || {}, null, 2));
   return true;
+};
+
+export const getChatState = async (): Promise<ChatState> => {
+  try {
+    const file = await getChatStateFile();
+    //@ts-ignore
+    const content = await file.read();
+    if (!content) return {};
+    const obj = JSON.parse(content);
+    if (!obj || typeof obj !== "object") return {};
+    return obj as ChatState;
+  } catch (e) {
+    console.error("getChatState failed", e);
+    return {};
+  }
+};
+
+export const setChatState = async (state: ChatState) => {
+  const file = await getChatStateFile();
+  //@ts-ignore
+  await file.write(JSON.stringify(state || {}, null, 2));
+  return true;
+};
+
+export const clearChatState = async () => {
+  const file = await getChatStateFile();
+  //@ts-ignore
+  await file.write(JSON.stringify(DEFAULT_CHAT_STATE, null, 2));
+  return true;
+};
+
+const inferImageExtFromName = (name: string): string => {
+  const n = String(name || "").toLowerCase();
+  if (n.endsWith(".png")) return "png";
+  if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "jpg";
+  if (n.endsWith(".webp")) return "webp";
+  return "png";
+};
+
+const mimeFromExt = (ext: string): string => {
+  const e = String(ext || "").toLowerCase();
+  if (e === "png") return "image/png";
+  if (e === "jpg" || e === "jpeg") return "image/jpeg";
+  if (e === "webp") return "image/webp";
+  return "application/octet-stream";
+};
+
+const uploadBlobToGrsai = async (blob: Blob, providerKey: string, ext: string, fileName: string): Promise<string> => {
+  const tokenRes = await fetch("https://grsai.dakka.com.cn/client/resource/newUploadTokenZH", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${providerKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ sux: ext }),
+  });
+  if (!tokenRes.ok) {
+    const text = await tokenRes.text().catch(() => "");
+    throw new Error(`获取上传 Token 失败: ${tokenRes.status} ${tokenRes.statusText}${text ? ` - ${text}` : ""}`);
+  }
+  const tokenJson = (await tokenRes.json().catch(() => null)) as any;
+  const token = tokenJson?.data?.token;
+  const key = tokenJson?.data?.key;
+  const url = tokenJson?.data?.url;
+  const domain = tokenJson?.data?.domain;
+  if (!token || !key || !url || !domain) throw new Error("上传 Token 响应缺少字段");
+
+  const form = new FormData();
+  form.append("token", String(token));
+  form.append("key", String(key));
+  form.append("file", blob, fileName);
+
+  const uploadRes = await fetch(String(url), {
+    method: "POST",
+    body: form,
+  });
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text().catch(() => "");
+    throw new Error(`文件上传失败: ${uploadRes.status} ${uploadRes.statusText}${text ? ` - ${text}` : ""}`);
+  }
+  return `${String(domain).replace(/\/$/, "")}/${String(key).replace(/^\//, "")}`;
+};
+
+export const pickAndUploadChatReferenceImages = async (): Promise<{ name: string; url: string }[]> => {
+  const providerKey = await getGrsProviderKey();
+  const fs = uxp.storage.localFileSystem;
+  const picked = (await fs
+    .getFileForOpening({
+      allowMultiple: true,
+      types: ["png", "jpg", "jpeg", "webp"],
+    } as any)
+    .catch(() => null)) as any;
+
+  const files = Array.isArray(picked) ? picked : picked ? [picked] : [];
+  if (files.length === 0) return [];
+
+  const out: { name: string; url: string }[] = [];
+  for (const f of files) {
+    const name = String(f?.name || "ref.png");
+    const ext = inferImageExtFromName(name);
+    const mime = mimeFromExt(ext);
+
+    //@ts-ignore
+    const bin = await f.read({ format: uxp.storage.formats.binary } as any);
+    const bytes = bin instanceof ArrayBuffer ? new Uint8Array(bin) : (bin as Uint8Array);
+    const blob = new Blob([bytes], { type: mime });
+
+    const url = await uploadBlobToGrsai(blob, providerKey, ext, name);
+    out.push({ name, url });
+  }
+
+  return out;
 };
 
 type ApiEnvelope<T> = {
