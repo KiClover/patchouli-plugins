@@ -539,20 +539,28 @@ const chatServiceConfig = computed<ChatServiceConfig>(() => {
     stream: true,
     onComplete: () => {
       sending.value = false;
-      const finalize = hasThinkingInTurn.value
-        ? ({
-            type: "thinking",
-            data: { title: "思考", text: "" },
-            status: "complete",
-            strategy: "merge",
-          } as any)
-        : undefined;
+      const out: any[] = [];
+      if (hasThinkingInTurn.value) {
+        out.push({
+          type: "thinking",
+          data: { title: "思考", text: "" },
+          status: "complete",
+          strategy: "merge",
+          defaultCollapsed: true,
+        });
+      }
+      out.push({
+        type: "markdown",
+        data: "",
+        status: "complete",
+        strategy: "merge",
+      });
 
       thinkPending.value = "";
       inThink.value = false;
       hasThinkingInTurn.value = false;
 
-      return finalize as any;
+      return (out.length === 1 ? out[0] : out) as any;
     },
     onError: (err: Error | Response) => {
       sending.value = false;
@@ -562,6 +570,34 @@ const chatServiceConfig = computed<ChatServiceConfig>(() => {
       sending.value = false;
     },
     onMessage: (chunk: SSEChunkData): AIMessageContent => {
+      const maybeDone = (chunk as any)?.data === "[DONE]" || (chunk as any)?.event === "done";
+      const finishReason = (chunk as any)?.data?.choices?.[0]?.finish_reason;
+      if (maybeDone || (typeof finishReason === "string" && finishReason)) {
+        sending.value = false;
+        const out: any[] = [];
+        if (hasThinkingInTurn.value) {
+          out.push({
+            type: "thinking",
+            data: { title: "思考", text: "" },
+            status: "complete",
+            strategy: "merge",
+            collapsed: true,
+            defaultCollapsed: true,
+          });
+        }
+        out.push({
+          type: "markdown",
+          data: "",
+          status: "complete",
+          strategy: "merge",
+        });
+
+        thinkPending.value = "";
+        inThink.value = false;
+        hasThinkingInTurn.value = false;
+        return (out.length === 1 ? out[0] : out) as any;
+      }
+
       const delta = (chunk as any)?.data?.choices?.[0]?.delta?.content;
       const raw = typeof delta === "string" ? delta : "";
 
@@ -578,6 +614,7 @@ const chatServiceConfig = computed<ChatServiceConfig>(() => {
           },
           status: "streaming",
           strategy: "merge",
+          defaultCollapsed: true,
         });
       }
       if (thinkClosed) {
@@ -589,6 +626,7 @@ const chatServiceConfig = computed<ChatServiceConfig>(() => {
           },
           status: "complete",
           strategy: "merge",
+          defaultCollapsed: true,
         });
       }
       if (answerDelta) {
@@ -605,88 +643,93 @@ const chatServiceConfig = computed<ChatServiceConfig>(() => {
     },
     onRequest: async (innerParams: ChatRequestParams) => {
       sending.value = true;
-      thinkPending.value = "";
-      inThink.value = false;
-      hasThinkingInTurn.value = false;
-      const cfg = await props.api.getGlobalConfig();
-      if (cfg.apiServer !== "grsai") throw new Error("当前 Chat 仅实现 grsai 模型服务器");
+      try {
+        thinkPending.value = "";
+        inThink.value = false;
+        hasThinkingInTurn.value = false;
+        const cfg = await props.api.getGlobalConfig();
+        if (cfg.apiServer !== "grsai") throw new Error("当前 Chat 仅实现 grsai 模型服务器");
 
-      const providerKey = await props.api.getGrsProviderKey?.();
-      if (!providerKey) throw new Error("Provider Key 为空");
+        const providerKey = await props.api.getGrsProviderKey?.();
+        if (!providerKey) throw new Error("Provider Key 为空");
 
-      const prompt = String((innerParams as any)?.prompt || "").trim();
+        const prompt = String((innerParams as any)?.prompt || "").trim();
 
-      const urls: string[] = [];
-      const attachmentItems: any[] = [];
-      if (useSelectionImage.value) {
-        const sel = await props.api.getCurrentSelectionPngUrl?.({ forceOpaque: true } as any);
-        const u = (sel as any)?.url;
-        if (u) {
-          urls.push(String(u));
-          attachmentItems.push({
-            name: "选区",
-            url: String(u),
-            status: "success",
-            description: "选区",
-          });
+        const urls: string[] = [];
+        const attachmentItems: any[] = [];
+        if (useSelectionImage.value) {
+          const sel = await props.api.getCurrentSelectionPngUrl?.({ forceOpaque: true } as any);
+          const u = (sel as any)?.url;
+          if (u) {
+            urls.push(String(u));
+            attachmentItems.push({
+              name: "选区",
+              url: String(u),
+              status: "success",
+              description: "选区",
+            });
+          }
         }
-      }
-      if (useCanvasImage.value) {
-        const canvas = await props.api.getCurrentCanvasPngUrl?.({ forceOpaque: true } as any);
-        const u = (canvas as any)?.url;
-        if (u) {
-          urls.push(String(u));
-          attachmentItems.push({
-            name: "画布",
-            url: String(u),
-            status: "success",
-            description: "画布",
-          });
+        if (useCanvasImage.value) {
+          const canvas = await props.api.getCurrentCanvasPngUrl?.({ forceOpaque: true } as any);
+          const u = (canvas as any)?.url;
+          if (u) {
+            urls.push(String(u));
+            attachmentItems.push({
+              name: "画布",
+              url: String(u),
+              status: "success",
+              description: "画布",
+            });
+          }
         }
-      }
-      for (const f of files.value as any[]) {
-        if (f?.status === "success" && f?.url) {
-          urls.push(String(f.url));
-          attachmentItems.push({
-            name: String(f?.name || "参考图"),
-            url: String(f.url),
-            status: "success",
-            description: "参考图",
-          });
+        for (const f of files.value as any[]) {
+          if (f?.status === "success" && f?.url) {
+            urls.push(String(f.url));
+            attachmentItems.push({
+              name: String(f?.name || "参考图"),
+              url: String(f.url),
+              status: "success",
+              description: "参考图",
+            });
+          }
         }
+
+        patchUserMessageAttachments(String((innerParams as any)?.messageID || ""), attachmentItems);
+
+        const openaiMessages: any[] = [];
+        const history = mockMessage.value || [];
+        for (const m of history) {
+          const role = m.role;
+          if (role !== "user" && role !== "assistant" && role !== "system") continue;
+          const text = extractPlainText((m as any).content);
+          if (!text) continue;
+          openaiMessages.push({ role, content: text });
+        }
+
+        if (urls.length > 0) {
+          openaiMessages.push({ role: "user", content: [{ type: "text", text: prompt }, ...buildVisionParts(urls)] });
+        } else {
+          openaiMessages.push({ role: "user", content: prompt });
+        }
+
+        const body = {
+          model: selectValue.value.value,
+          stream: true,
+          messages: openaiMessages,
+        };
+
+        return {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${providerKey}`,
+          },
+          body: JSON.stringify(body),
+        } as any;
+      } catch (e) {
+        sending.value = false;
+        throw e;
       }
-
-      patchUserMessageAttachments(String((innerParams as any)?.messageID || ""), attachmentItems);
-
-      const openaiMessages: any[] = [];
-      const history = mockMessage.value || [];
-      for (const m of history) {
-        const role = m.role;
-        if (role !== "user" && role !== "assistant" && role !== "system") continue;
-        const text = extractPlainText((m as any).content);
-        if (!text) continue;
-        openaiMessages.push({ role, content: text });
-      }
-
-      if (urls.length > 0) {
-        openaiMessages.push({ role: "user", content: [{ type: "text", text: prompt }, ...buildVisionParts(urls)] });
-      } else {
-        openaiMessages.push({ role: "user", content: prompt });
-      }
-
-      const body = {
-        model: selectValue.value.value,
-        stream: true,
-        messages: openaiMessages,
-      };
-
-      return {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${providerKey}`,
-        },
-        body: JSON.stringify(body),
-      } as any;
     },
   } as any;
 });
@@ -707,6 +750,7 @@ const onSend = (e: CustomEvent<ChatRequestParams>): ChatRequestParams => {
 const senderProps = computed(() => {
   return {
     placeholder: "有问题，尽管问～ Enter 发送，Shift+Enter 换行",
+    loading: sending.value,
     actions: ["send"],
     attachmentsProps: {
       items: files.value,
