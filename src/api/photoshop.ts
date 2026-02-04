@@ -227,12 +227,11 @@ export const placeImageUrlToSelectionAndMask = async (params: {
     // Move layer to top-left of selection first
     await (layer as any).translate(selLeft - l0, selTop - t0);
 
-    // Scale layer to match selection size (from top-left anchor)
+    // Scale layer to match selection size
     const sx = (selW / w0) * 100;
     const sy = (selH / h0) * 100;
     await (layer as any).scale(sx, sy, photoshop.constants.AnchorPosition.TOPLEFT);
 
-    // Restore selection using rectangle coordinates (no channel to avoid PS dialogs)
     await photoshop.action.batchPlay(
       [
         {
@@ -278,7 +277,7 @@ export const placeImageUrlToSelectionAndMask = async (params: {
       {},
     );
 
-    // 如果原本没有选区，这里清掉选区，避免改变用户的选区状态
+    // 如果原本没有选区清掉选区
     if (!hadSelection) {
       await photoshop.action.batchPlay(
         [
@@ -313,7 +312,7 @@ export const placeImageUrlsToPatchouliResGroup = async (params: {
     const groupName = (params.groupName || "patchouli-res").trim() || "patchouli-res";
     const { hadSelection, selLeft, selTop, selRight, selBottom, selW, selH } = ensureSelectionBounds(doc);
 
-    // 1) 获取/创建组
+    // 创建组
     let group: any = null;
     try {
       group = (doc as any).layers?.getByName?.(groupName) || null;
@@ -333,7 +332,7 @@ export const placeImageUrlsToPatchouliResGroup = async (params: {
       group = await (doc as any).createLayerGroup({ name: groupName });
     }
 
-    // 2) 逐张 place，并移动到组内且缩放到选区大小
+    // 逐张 place
     for (let i = 0; i < urls.length; i++) {
       const url = urls[i];
 
@@ -368,10 +367,8 @@ export const placeImageUrlsToPatchouliResGroup = async (params: {
       const layer = doc.activeLayers?.[0];
       if (!layer) throw new Error("No active layer after placing image");
 
-      // Move into group
       (layer as any).move(group, photoshop.constants.ElementPlacement.PLACEINSIDE);
 
-      // Transform to match selection (top-left anchored)
       const b0: any = (layer as any).bounds;
       const l0 = typeof b0?.left === "number" ? b0.left : Number(b0?.left?.value ?? b0?.left);
       const t0 = typeof b0?.top === "number" ? b0.top : Number(b0?.top?.value ?? b0?.top);
@@ -386,7 +383,7 @@ export const placeImageUrlsToPatchouliResGroup = async (params: {
       await (layer as any).scale(sx, sy, photoshop.constants.AnchorPosition.TOPLEFT);
     }
 
-    // 3) placeEvent/变换过程中可能会清空/改变选区；这里在建蒙版前强制恢复矩形选区
+    // 建蒙版前强制恢复矩形选区
     await photoshop.action.batchPlay(
       [
         {
@@ -405,7 +402,7 @@ export const placeImageUrlsToPatchouliResGroup = async (params: {
       {},
     );
 
-    // 4) 在组上创建蒙版（一次即可）
+    // 在组上创建蒙版
     await photoshop.action.batchPlay(
       [
         {
@@ -436,7 +433,6 @@ export const placeImageUrlsToPatchouliResGroup = async (params: {
     try {
       await makeGroupMask();
     } catch (e) {
-      // 兼容：如果组已有蒙版或状态不满足，先尝试删除已有蒙版再重试一次
       try {
         await photoshop.action.batchPlay(
           [
@@ -469,8 +465,7 @@ export const placeImageUrlsToPatchouliResGroup = async (params: {
       );
     }
 
-    // 5) Hue 偏移：放在组内做 Hue/Saturation 调整层，几乎不额外占用 JS 内存，也不需要在 webview/JS 做像素级处理。
-    // 约定：上传前做 +180，则这里做 -180 抵消。
+    // Hue 偏移
     const wantHueShift = params.hueShift180 === true;
     const shiftLayerName = "patchouli-hue-shift";
     try {
@@ -513,8 +508,6 @@ const normalizeToUint8 = (data: unknown, expectedLen: number, name: string): Uin
 
         const out = new Uint8Array(expectedLen);
 
-        // SDPPP: imaging.getData() 在某些情况下会返回 0..32768 的 Uint16（而不是 0..65535），
-        // 并且把 32768 视作“满量程”。SDPPP 的做法是：32768 -> 255，其余 /128。
         if (max <= 32768) {
             for (let i = 0; i < expectedLen; i++) {
                 const v = data[i];
@@ -588,7 +581,7 @@ export const getCurrentSelectionRgba = async (params?: { applyGamma?: boolean })
 
         const sourceBounds = { left, top, right, bottom, width, height };
 
-        // 1) 取 RGB 像素（选区矩形范围）
+        // 取 RGB 像素
         const pixelsResult = await photoshop.imaging.getPixels({
             documentID: doc.id,
             sourceBounds,
@@ -642,7 +635,7 @@ export const getCurrentSelectionRgba = async (params?: { applyGamma?: boolean })
         const mmMask = minMaxU8(maskU8);
         console.log("selection rgba debug", { width, height, comps, applyGamma, rgb: mmRgb, mask: mmMask });
 
-        // 3) 合成 RGBA（mask 当 alpha）
+        // 合成 RGBA mask 当 alpha
         const rgba = new Uint8Array(outW * outH * 4);
         for (let i = 0; i < outW * outH; i++) {
             const r = rgbU8[i * comps + 0];
@@ -853,7 +846,7 @@ export const getCurrentSelectionPngUrl = async (params?: { applyGamma?: boolean;
           return m;
         })();
 
-    // 直接生成最终要编码的 RGB（白底合成），避免 RGBA/RGB 多份中间 buffer。
+    // 生成最终要编码的 RGB
     const rgb = new Uint8Array(totalPixels * 3);
     const bg = 255;
     const forceOpaque = params?.forceOpaque === true;
