@@ -26,6 +26,7 @@ const list = ref<LibPresetInfo[]>([]);
 const total = computed(() => list.value.length);
 
 const keyword = ref("");
+const selectedTags = ref<string[]>([]);
 
 const addingId = ref<number | null>(null);
 
@@ -54,6 +55,7 @@ const loadList = async () => {
       page: 1,
       page_size: 999,
       name: keyword.value.trim() ? keyword.value.trim() : undefined,
+      tags: selectedTags.value.length > 0 ? selectedTags.value : undefined,
     });
     list.value = res.list || [];
     for (const item of list.value) {
@@ -69,7 +71,7 @@ const loadList = async () => {
 
 let searchTimer: number | null = null;
 watch(
-  keyword,
+  [() => keyword.value, () => [...selectedTags.value]],
   () => {
     if (searchTimer != null) window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => {
@@ -78,6 +80,16 @@ watch(
   },
   { flush: "post" },
 );
+
+const handleTagClick = (tag: string) => {
+  if (!selectedTags.value.includes(tag)) {
+    selectedTags.value = [...selectedTags.value, tag];
+  }
+};
+
+const removeTag = (tag: string) => {
+  selectedTags.value = selectedTags.value.filter((t) => t !== tag);
+};
 
 const addToPreset = async (item: LibPresetInfo) => {
   if (addingId.value != null) return;
@@ -126,10 +138,17 @@ onMounted(async () => {
         <div class="community-view__title-main">大图书馆</div>
         <div class="community-view__title-sub">共 {{ total }} 条</div>
       </div>
-      <div class="community-view__actions">
-        <t-input v-model="keyword" clearable placeholder="筛选名称" style="width: 220px" />
-        <t-button theme="default" variant="outline" :loading="loading" @click="loadList">刷新</t-button>
-      </div>
+      <t-button theme="default" variant="outline" :loading="loading" @click="loadList">刷新</t-button>
+    </div>
+
+    <div class="community-view__search">
+      <t-input v-model="keyword" clearable placeholder="按名称搜索" />
+      <t-tag-input
+        v-model="selectedTags"
+        clearable
+        placeholder="按标签搜索"
+        :tag-props="{ theme: 'primary', variant: 'light' }"
+      />
     </div>
 
     <t-loading :loading="loading" style="width: 100%">
@@ -159,12 +178,19 @@ onMounted(async () => {
             <div class="community-card__label">描述</div>
             <div class="community-card__value">{{ item.description || "-" }}</div>
           </div>
-          <!--
-          <div class="community-card__row community-card__row--prompt">
-            <div class="community-card__label">提示词</div>
-            <div class="community-card__value community-card__prompt">{{ item.prompt || "-" }}</div>
+
+          <div v-if="item.tags && item.tags.length > 0" class="community-card__tags">
+            <span
+              v-for="tag in item.tags"
+              :key="tag"
+              class="community-card__tag-wrapper"
+              @click.stop="handleTagClick(tag)"
+            >
+              <t-tag size="small" variant="outline" class="community-card__tag">
+                {{ tag }}
+              </t-tag>
+            </span>
           </div>
-          -->
 
           <div class="community-card__footer">
             <div class="community-card__user">
@@ -196,7 +222,13 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
-  gap: 12px;
+}
+
+.community-view__search {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .community-view__title-main {
@@ -207,12 +239,6 @@ onMounted(async () => {
 .community-view__title-sub {
   font-size: 12px;
   opacity: 0.75;
-}
-
-.community-view__actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .community-view__empty {
@@ -272,6 +298,28 @@ onMounted(async () => {
 .community-card__value {
   flex: 1 1 auto;
   word-break: break-word;
+}
+
+.community-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--td-component-stroke);
+}
+
+.community-card__tag-wrapper {
+  cursor: pointer;
+  display: inline-flex;
+}
+
+.community-card__tag {
+  pointer-events: none;
+  &:hover {
+    color: var(--td-brand-color);
+    border-color: var(--td-brand-color);
+  }
 }
 
 .community-card__row--prompt {

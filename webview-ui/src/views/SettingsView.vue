@@ -6,7 +6,7 @@ import type { API } from "../../../src/api/api";
 import { setSecretKey } from "../api/req";
 import { installOnScreenDebug, uninstallOnScreenDebug } from "../debug-panel";
 
-const currentVersion = "0.2.1"
+const currentVersion = "0.3.2"
 
 const props = defineProps<{ api: API }>();
 

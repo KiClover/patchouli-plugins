@@ -21,7 +21,7 @@ const manifest: UXP_Manifest = {
   host: [
     {
       app: "PS",
-      minVersion: "25.0.0",
+      minVersion: "22.0.0",
     },
               ],
   entrypoints: [

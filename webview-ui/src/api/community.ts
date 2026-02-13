@@ -7,6 +7,7 @@ export type LibPresetInfo = {
   prompt: string;
   user_id: number;
   state: boolean;
+  tags: string[];
 };
 
 export type GetLibPresetListReq = {
@@ -15,6 +16,7 @@ export type GetLibPresetListReq = {
   page_size?: number;
   name?: string;
   state?: boolean;
+  tags?: string[];
 };
 
 export type GetLibPresetListResp = {
